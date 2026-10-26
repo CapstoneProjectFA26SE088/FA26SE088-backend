@@ -21,11 +21,12 @@ public enum AuditAction {
    */
   ACCOUNT_UNVERIFIED_PURGED,
 
-  // --- masterdata (MD-02) ---
+  // --- masterdata (MD-02, UC54) ---
   MASTERDATA_CREATED,
   MASTERDATA_UPDATED,
   MASTERDATA_STATUS_CHANGED,
   MASTERDATA_DELETE_REJECTED,
+  SYSTEM_PARAMETER_UPDATED,
 
   // --- lab ---
   /** UC12: Film Lab Owner bật/tắt nhận đơn; before/after ghi {@code acceptingOrders}. */
