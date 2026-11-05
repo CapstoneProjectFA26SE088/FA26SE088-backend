@@ -1,6 +1,7 @@
 package com.fa26se088.filmlink.service.account;
 
 import com.fa26se088.filmlink.dto.account.request.ChangePasswordRequest;
+import com.fa26se088.filmlink.dto.account.request.CreateAdminRequest;
 import com.fa26se088.filmlink.dto.account.request.ForgotPasswordRequest;
 import com.fa26se088.filmlink.dto.account.request.RegisterRequest;
 import com.fa26se088.filmlink.dto.account.request.ResendOtpRequest;
@@ -9,12 +10,11 @@ import com.fa26se088.filmlink.dto.account.request.VerifyEmailRequest;
 import com.fa26se088.filmlink.dto.account.request.VerifyPasswordResetOtpRequest;
 import com.fa26se088.filmlink.dto.account.response.AccountNotificationPreferenceResponse;
 import com.fa26se088.filmlink.dto.account.response.PasswordResetTokenResponse;
-import com.fa26se088.filmlink.dto.account.response.AccountNotificationPreferenceResponse;
 import com.fa26se088.filmlink.dto.account.response.TokenResponse;
 import com.fa26se088.filmlink.dto.account.response.UserAccountResponse;
 import java.util.Optional;
 
-/** Vòng đời tài khoản: đăng ký Photographer, xác thực email, hồ sơ của chính mình (UC06), đổi mật khẩu (UC02), quên mật khẩu (SCR-03). */
+/** Vòng đời tài khoản: đăng ký Photographer, xác thực email, hồ sơ của chính mình (UC06), đổi mật khẩu (UC02), quên mật khẩu (SCR-03), tạo tài khoản Admin. */
 public interface UserAccountService {
 
   /**
@@ -118,5 +118,12 @@ public interface UserAccountService {
    * <p>Được gọi từ {@code AccountPurgeUnverifiedJob}; không dùng ở API.
    */
   void purgeUnverifiedAccounts();
+
+  /**
+   * Tạo tài khoản Admin mới (yêu cầu quyền ADMIN, BR-32 ghi audit log).
+   *
+   * <p>Tài khoản có role ADMIN, trạng thái ACTIVE ngay lập tức.
+   */
+  UserAccountResponse createAdmin(CreateAdminRequest request);
 }
 

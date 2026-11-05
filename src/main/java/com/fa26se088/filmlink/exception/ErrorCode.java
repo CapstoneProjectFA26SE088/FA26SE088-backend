@@ -40,6 +40,7 @@ public enum ErrorCode {
   ACCOUNT_OLD_PASSWORD_INVALID(HttpStatus.BAD_REQUEST, null),
   /** UC02: mật khẩu mới trùng với mật khẩu hiện tại. */
   ACCOUNT_NEW_PASSWORD_SAME_AS_OLD(HttpStatus.BAD_REQUEST, null),
+  ACCOUNT_EMAIL_ALREADY_EXISTS(HttpStatus.CONFLICT, null),
 
   // --- lab ---
   LAB_NOT_FOUND(HttpStatus.NOT_FOUND, null),
@@ -62,11 +63,17 @@ public enum ErrorCode {
   /** UH-39: storage lỗi thì báo rõ, phần khác vẫn chạy. */
   STORAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, null),
 
-  // --- masterdata (MD-02) ---
+  // --- masterdata (MD-02, UC54) ---
   /** Mã code đã tồn tại trong bảng danh mục (BR-16). */
   MASTERDATA_CODE_DUPLICATE(HttpStatus.CONFLICT, null),
   /** Danh mục đang được tham chiếu, không thể xóa cứng; phải chuyển sang DISCONTINUED (BR-16). */
-  MASTERDATA_IN_USE(HttpStatus.UNPROCESSABLE_CONTENT, null);
+  MASTERDATA_IN_USE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** Tham số hệ thống không tồn tại (UC54). */
+  SYSTEM_PARAMETER_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  /** Giá trị tham số hệ thống không hợp lệ hoặc vi phạm ràng buộc miền giá trị / thứ tự (BR-38). */
+  SYSTEM_PARAMETER_INVALID_VALUE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** Xung đột phiên bản cập nhật tham số hệ thống do có người khác cập nhật trước (Optimistic Locking). */
+  SYSTEM_PARAMETER_CONFLICT(HttpStatus.CONFLICT, null);
 
   private final HttpStatus httpStatus;
   private final String messageCode;

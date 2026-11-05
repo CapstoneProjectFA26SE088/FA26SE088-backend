@@ -53,6 +53,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import com.fa26se088.filmlink.dto.account.request.CreateAdminRequest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -344,6 +346,86 @@ class UserAccountServiceImplTest {
               assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ACCOUNT_OTP_INVALID);
               assertThat(ex.getErrorCode().getMessageCode()).isEqualTo("MSG11");
             });
+  }
+
+  // --- createAdmin ---
+
+  @Test
+  void createAdmin_success() {
+    String adminEmail = "admin@example.com";
+    when(userAccountRepository.existsByEmail(adminEmail)).thenReturn(false);
+
+    UserAccountResponse response =
+        service.createAdmin(
+            new CreateAdminRequest(" Admin@Example.COM ", "secretAdmin1", "  Admin User ", "0901234567"));
+
+    ArgumentCaptor<UserAccount> accountCaptor = ArgumentCaptor.forClass(UserAccount.class);
+    verify(userAccountRepository).saveAndFlush(accountCaptor.capture());
+    UserAccount saved = accountCaptor.getValue();
+
+    assertThat(saved.getEmail()).isEqualTo(adminEmail);
+    assertThat(saved.getFullName()).isEqualTo("Admin User");
+    assertThat(saved.getPhoneNumber()).isEqualTo("0901234567");
+    assertThat(saved.getRole()).isEqualTo(UserAccountRole.ADMIN);
+    assertThat(saved.getStatus()).isEqualTo(UserAccountStatus.ACTIVE);
+    assertThat(saved.getEmailVerifiedAt()).isNotNull();
+    assertThat(saved.getTermsAcceptedAt()).isNotNull();
+    assertThat(passwordEncoder.matches("secretAdmin1", saved.getPasswordHash())).isTrue();
+
+    ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+    verify(auditLogService).recordSuccess(auditCaptor.capture());
+    AuditEntry entry = auditCaptor.getValue();
+    assertThat(entry.action()).isEqualTo(AuditAction.ACCOUNT_ADMIN_CREATED);
+
+    assertThat(response.email()).isEqualTo(adminEmail);
+    assertThat(response.role()).isEqualTo(UserAccountRole.ADMIN);
+    assertThat(response.status()).isEqualTo(UserAccountStatus.ACTIVE);
+  }
+
+  @Test
+  void createAdmin_duplicateEmail_throwsConflictException() {
+    String adminEmail = "existing@example.com";
+    when(userAccountRepository.existsByEmail(adminEmail)).thenReturn(true);
+
+    assertThatThrownBy(
+            () ->
+                service.createAdmin(
+                    new CreateAdminRequest(adminEmail, "secretAdmin1", "Admin User", null)))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ACCOUNT_EMAIL_ALREADY_EXISTS));
+
+    verify(userAccountRepository, never()).saveAndFlush(any());
+    verify(auditLogService, never()).recordSuccess(any());
+  }
+
+  @Test
+  void createAdmin_fullNameTooShort_throwsValidationException() {
+    assertThatThrownBy(
+            () ->
+                service.createAdmin(
+                    new CreateAdminRequest("admin@example.com", "secretAdmin1", " A ", null)))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+
+    verify(userAccountRepository, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void createAdmin_dataIntegrityViolation_throwsConflictException() {
+    String adminEmail = "race@example.com";
+    when(userAccountRepository.existsByEmail(adminEmail)).thenReturn(false);
+    when(userAccountRepository.saveAndFlush(any()))
+        .thenThrow(new DataIntegrityViolationException("duplicate key"));
+
+    assertThatThrownBy(
+            () ->
+                service.createAdmin(
+                    new CreateAdminRequest(adminEmail, "secretAdmin1", "Admin User", null)))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ACCOUNT_EMAIL_ALREADY_EXISTS));
   }
 
   private static UserAccount pendingAccount() {

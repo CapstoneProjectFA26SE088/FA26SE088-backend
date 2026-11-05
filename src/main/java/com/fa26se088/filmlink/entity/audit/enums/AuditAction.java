@@ -11,6 +11,7 @@ package com.fa26se088.filmlink.entity.audit.enums;
 public enum AuditAction {
   // --- account ---
   ACCOUNT_PASSWORD_CHANGED,
+  ACCOUNT_ADMIN_CREATED,
 
   /** SCR-03: đặt lại mật khẩu thành công qua luồng quên mật khẩu. */
   ACCOUNT_PASSWORD_RESET,
@@ -21,11 +22,12 @@ public enum AuditAction {
    */
   ACCOUNT_UNVERIFIED_PURGED,
 
-  // --- masterdata (MD-02) ---
+  // --- masterdata (MD-02, UC54) ---
   MASTERDATA_CREATED,
   MASTERDATA_UPDATED,
   MASTERDATA_STATUS_CHANGED,
   MASTERDATA_DELETE_REJECTED,
+  SYSTEM_PARAMETER_UPDATED,
 
   // --- lab ---
   /** UC12: Film Lab Owner bật/tắt nhận đơn; before/after ghi {@code acceptingOrders}. */

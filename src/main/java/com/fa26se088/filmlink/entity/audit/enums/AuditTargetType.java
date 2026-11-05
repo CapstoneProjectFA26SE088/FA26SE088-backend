@@ -11,11 +11,12 @@ public enum AuditTargetType {
   // --- account ---
   USER_ACCOUNT,
 
-  // --- masterdata (MD-02) ---
+  // --- masterdata (MD-02, UC54) ---
   FILM_PROCESS,
   FILM_FORMAT,
   SERVICE_TYPE,
   FILM_STOCK,
+  SYSTEM_PARAMETER,
 
   // --- lab ---
   FILM_LAB
