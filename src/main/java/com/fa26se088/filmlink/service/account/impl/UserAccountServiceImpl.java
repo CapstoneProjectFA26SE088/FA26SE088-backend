@@ -2,6 +2,7 @@ package com.fa26se088.filmlink.service.account.impl;
 
 import com.fa26se088.filmlink.client.notification.EmailClient;
 import com.fa26se088.filmlink.dto.account.request.ChangePasswordRequest;
+import com.fa26se088.filmlink.dto.account.request.CreateAdminRequest;
 import com.fa26se088.filmlink.dto.account.request.ForgotPasswordRequest;
 import com.fa26se088.filmlink.dto.account.request.RegisterRequest;
 import com.fa26se088.filmlink.dto.account.request.ResendOtpRequest;
@@ -35,6 +36,7 @@ import io.jsonwebtoken.JwtException;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -556,6 +558,48 @@ public class UserAccountServiceImpl implements UserAccountService {
             "Job xoá " + deleted + " tài khoản PENDING_VERIFICATION tạo trước " + deadline,
             null,
             null));
+  }
+
+  @Override
+  @Transactional
+  public UserAccountResponse createAdmin(CreateAdminRequest request) {
+    String email = EmailUtils.normalize(request.email());
+    String fullName = request.fullName().strip();
+    if (fullName.length() < 2) {
+      throw new BusinessException(ErrorCode.VALIDATION_ERROR, "Họ tên phải có 2–100 ký tự.");
+    }
+    if (userAccountRepository.existsByEmail(email)) {
+      throw new BusinessException(
+          ErrorCode.ACCOUNT_EMAIL_ALREADY_EXISTS, "Email đã được sử dụng trong hệ thống.");
+    }
+
+    UserAccount account = new UserAccount();
+    account.setEmail(email);
+    account.setPasswordHash(passwordEncoder.encode(request.password()));
+    account.setFullName(fullName);
+    account.setPhoneNumber(blankToNull(request.phoneNumber()));
+    account.setRole(UserAccountRole.ADMIN);
+    account.setStatus(UserAccountStatus.ACTIVE);
+    account.setEmailVerifiedAt(Instant.now());
+    account.setTermsAcceptedAt(Instant.now());
+
+    try {
+      userAccountRepository.saveAndFlush(account);
+    } catch (DataIntegrityViolationException ex) {
+      throw new BusinessException(
+          ErrorCode.ACCOUNT_EMAIL_ALREADY_EXISTS, "Email đã được sử dụng trong hệ thống.");
+    }
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ACCOUNT_ADMIN_CREATED,
+            AuditTargetType.USER_ACCOUNT,
+            account.getId(),
+            "Admin tạo tài khoản Admin mới: " + email,
+            null,
+            Map.of("email", account.getEmail(), "role", account.getRole().name())));
+
+    return userAccountMapper.toResponse(account);
   }
 
   /** UC06 bước 2: sinh OTP bằng {@link SecureRandom}, chỉ lưu BCrypt hash, gửi mã gốc qua email. */

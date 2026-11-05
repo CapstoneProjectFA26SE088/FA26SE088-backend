@@ -40,6 +40,7 @@ public enum ErrorCode {
   ACCOUNT_OLD_PASSWORD_INVALID(HttpStatus.BAD_REQUEST, null),
   /** UC02: mật khẩu mới trùng với mật khẩu hiện tại. */
   ACCOUNT_NEW_PASSWORD_SAME_AS_OLD(HttpStatus.BAD_REQUEST, null),
+  ACCOUNT_EMAIL_ALREADY_EXISTS(HttpStatus.CONFLICT, null),
 
   // --- lab ---
   LAB_NOT_FOUND(HttpStatus.NOT_FOUND, null),
