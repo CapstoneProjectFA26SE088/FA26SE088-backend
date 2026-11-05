@@ -12,10 +12,22 @@ public enum AuditAction {
   // --- account ---
   ACCOUNT_PASSWORD_CHANGED,
 
-  // --- masterdata (MD-02, UC54) ---
+  /** SCR-03: đặt lại mật khẩu thành công qua luồng quên mật khẩu. */
+  ACCOUNT_PASSWORD_RESET,
+
+  /**
+   * UC06: job định kỳ xoá hàng loạt tài khoản PENDING_VERIFICATION quá 24 giờ chưa xác thực email.
+   * Actor là System (Scheduler). Target type USER_ACCOUNT, targetId = null (batch).
+   */
+  ACCOUNT_UNVERIFIED_PURGED,
+
+  // --- masterdata (MD-02) ---
   MASTERDATA_CREATED,
   MASTERDATA_UPDATED,
   MASTERDATA_STATUS_CHANGED,
   MASTERDATA_DELETE_REJECTED,
-  SYSTEM_PARAMETER_UPDATED
+
+  // --- lab ---
+  /** UC12: Film Lab Owner bật/tắt nhận đơn; before/after ghi {@code acceptingOrders}. */
+  LAB_ACCEPTING_ORDERS_CHANGED
 }
