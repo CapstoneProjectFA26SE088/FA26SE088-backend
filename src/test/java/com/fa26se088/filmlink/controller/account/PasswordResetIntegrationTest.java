@@ -124,6 +124,12 @@ class PasswordResetIntegrationTest {
         otpCodeRepository.findAll().stream()
             .filter(o -> o.getUserAccount().getId().equals(account.getId()))
             .toList());
+
+    // Xoá Refresh Token cũ để tránh trùng lặp uq_refresh_tokens_hash
+    refreshTokenRepository.deleteAll(
+        refreshTokenRepository.findAll().stream()
+            .filter(t -> t.getUserAccount().getId().equals(account.getId()))
+            .toList());
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
