@@ -44,9 +44,22 @@ public enum ErrorCode {
   // --- lab ---
   LAB_NOT_FOUND(HttpStatus.NOT_FOUND, null),
   LAB_ACCESS_DENIED(HttpStatus.FORBIDDEN, null),
+  LAB_NOT_ACCEPTING_ORDERS(HttpStatus.BAD_REQUEST, null),
+
+  // --- order ---
+  ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  ORDER_INVALID_STATE(HttpStatus.CONFLICT, null),
+  ORDER_ACCESS_DENIED(HttpStatus.FORBIDDEN, null),
+  ORDER_ALREADY_PAID(HttpStatus.CONFLICT, null),
+  ORDER_CREATION_FAILED(HttpStatus.BAD_REQUEST, null),
 
   // --- payment ---
   PAYMENT_GATEWAY_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, null),
+  PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  PAYMENT_INVALID_STATE(HttpStatus.CONFLICT, null),
+  PAYMENT_AMOUNT_MISMATCH(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  PAYMENT_SIGNATURE_INVALID(HttpStatus.BAD_REQUEST, null),
+  PAYMENT_ACCESS_DENIED(HttpStatus.FORBIDDEN, null),
 
   // --- storage (client/storage) ---
   STORAGE_FILE_TYPE_NOT_ALLOWED(HttpStatus.BAD_REQUEST, null),
@@ -54,7 +67,19 @@ public enum ErrorCode {
   /** Sai chữ ký và hết hạn dùng chung một mã, không tiết lộ lý do. */
   STORAGE_LINK_INVALID(HttpStatus.FORBIDDEN, null),
   /** UH-39: storage lỗi thì báo rõ, phần khác vẫn chạy. */
-  STORAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, null);
+  STORAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, null),
+
+  // --- notification / email (client/notification) ---
+  /** UH-37: Lỗi gửi email qua SMTP hoặc dịch vụ mail không khả dụng. */
+  EMAIL_SEND_FAILED(HttpStatus.SERVICE_UNAVAILABLE, null),
+
+  // --- delivery / geocoding (client/maps) ---
+  /** DEL-GEO-01: API key Google Maps chưa được cấu hình. */
+  GEOCODING_SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, null),
+  /** DEL-GEO-01: Không tìm thấy kết quả tọa độ hoặc địa chỉ tương ứng. */
+  GEOCODING_NO_RESULT(HttpStatus.NOT_FOUND, null),
+  /** DEL-GEO-01: Lỗi khi kết nối hoặc gọi API bên ngoài (Google Maps Geocoding). */
+  GEOCODING_API_ERROR(HttpStatus.BAD_GATEWAY, null);
 
   private final HttpStatus httpStatus;
   private final String messageCode;

@@ -6,6 +6,7 @@ import com.fa26se088.filmlink.dto.account.request.ForgotPasswordRequest;
 import com.fa26se088.filmlink.dto.account.request.RegisterRequest;
 import com.fa26se088.filmlink.dto.account.request.ResendOtpRequest;
 import com.fa26se088.filmlink.dto.account.request.ResetPasswordRequest;
+import com.fa26se088.filmlink.dto.account.request.UpdateAccountRequest;
 import com.fa26se088.filmlink.dto.account.request.VerifyEmailRequest;
 import com.fa26se088.filmlink.dto.account.request.VerifyPasswordResetOtpRequest;
 import com.fa26se088.filmlink.dto.account.response.AccountNotificationPreferenceResponse;
@@ -25,6 +26,7 @@ import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.mapper.account.UserAccountMapper;
 import com.fa26se088.filmlink.repository.account.OtpCodeRepository;
 import com.fa26se088.filmlink.repository.account.UserAccountRepository;
+import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.security.JwtTokenProvider;
 import com.fa26se088.filmlink.service.account.AuthenticationService;
 import com.fa26se088.filmlink.service.account.UserAccountService;
@@ -590,5 +592,154 @@ public class UserAccountServiceImpl implements UserAccountService {
   private static BusinessException otpInvalid() {
     return new BusinessException(
         ErrorCode.ACCOUNT_OTP_INVALID, "Mã xác thực không đúng hoặc đã hết hạn.");
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public UserAccountResponse getAccountById(Long id, AuthenticatedAccount currentAccount) {
+    if (currentAccount == null) {
+      throw new BusinessException(
+          ErrorCode.AUTHENTICATION_REQUIRED, "Cần đăng nhập để truy cập tài nguyên này.");
+    }
+
+    if (currentAccount.role() != UserAccountRole.ADMIN && !currentAccount.id().equals(id)) {
+      throw new BusinessException(
+          ErrorCode.ACCESS_DENIED, "Bạn không có quyền truy cập thông tin tài khoản này.");
+    }
+
+    UserAccount account =
+        userAccountRepository
+            .findById(id)
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy tài khoản với id: " + id));
+
+    return userAccountMapper.toResponse(account);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public UserAccountResponse getAccountByEmail(String email, AuthenticatedAccount currentAccount) {
+    if (currentAccount == null) {
+      throw new BusinessException(
+          ErrorCode.AUTHENTICATION_REQUIRED, "Cần đăng nhập để truy cập tài nguyên này.");
+    }
+
+    String normalizedEmail = EmailUtils.normalize(email);
+    if (normalizedEmail == null || normalizedEmail.isBlank()) {
+      throw new BusinessException(
+          ErrorCode.VALIDATION_ERROR, "Email không được để trống.");
+    }
+
+    if (currentAccount.role() != UserAccountRole.ADMIN
+        && !currentAccount.email().equalsIgnoreCase(normalizedEmail)) {
+      throw new BusinessException(
+          ErrorCode.ACCESS_DENIED, "Bạn không có quyền truy cập thông tin tài khoản này.");
+    }
+
+    UserAccount account =
+        userAccountRepository
+            .findByEmail(normalizedEmail)
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy tài khoản với email: " + email));
+
+    return userAccountMapper.toResponse(account);
+  }
+
+  @Override
+  @Transactional
+  public UserAccountResponse updateAccount(
+      Long id, UpdateAccountRequest request, AuthenticatedAccount currentAccount) {
+    if (currentAccount == null) {
+      throw new BusinessException(
+          ErrorCode.AUTHENTICATION_REQUIRED, "Cần đăng nhập để truy cập tài nguyên này.");
+    }
+
+    if (currentAccount.role() != UserAccountRole.ADMIN && !currentAccount.id().equals(id)) {
+      throw new BusinessException(
+          ErrorCode.ACCESS_DENIED, "Bạn không có quyền chỉnh sửa tài khoản này.");
+    }
+
+    UserAccount account =
+        userAccountRepository
+            .findById(id)
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy tài khoản với id: " + id));
+
+    if (account.getStatus() == UserAccountStatus.DELETED
+        || account.getStatus() == UserAccountStatus.INACTIVE) {
+      throw new BusinessException(
+          ErrorCode.BUSINESS_RULE_VIOLATION, "Không thể chỉnh sửa tài khoản đã bị vô hiệu hoá hoặc xoá.");
+    }
+
+    account.setFullName(request.fullName().strip());
+    if (request.phoneNumber() != null) {
+      account.setPhoneNumber(blankToNull(request.phoneNumber()));
+    }
+    if (request.avatarBlobKey() != null) {
+      account.setAvatarBlobKey(blankToNull(request.avatarBlobKey()));
+    }
+    if (request.inAppNotificationEnabled() != null) {
+      account.setInAppNotificationEnabled(request.inAppNotificationEnabled());
+    }
+    if (request.emailNotificationEnabled() != null) {
+      account.setEmailNotificationEnabled(request.emailNotificationEnabled());
+    }
+    if (request.pushNotificationEnabled() != null) {
+      account.setPushNotificationEnabled(request.pushNotificationEnabled());
+    }
+
+    UserAccount saved = userAccountRepository.save(account);
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ACCOUNT_PROFILE_UPDATED,
+            AuditTargetType.USER_ACCOUNT,
+            saved.getId(),
+            "Cập nhật thông tin tài khoản: " + saved.getEmail(),
+            null,
+            null));
+
+    return userAccountMapper.toResponse(saved);
+  }
+
+  @Override
+  @Transactional
+  public void deactivateAccount(Long id, AuthenticatedAccount currentAccount) {
+    if (currentAccount == null || currentAccount.role() != UserAccountRole.ADMIN) {
+      throw new BusinessException(
+          ErrorCode.ACCESS_DENIED, "Chỉ quản trị viên mới có quyền vô hiệu hoá tài khoản.");
+    }
+
+    UserAccount account =
+        userAccountRepository
+            .findById(id)
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.RESOURCE_NOT_FOUND, "Không tìm thấy tài khoản với id: " + id));
+
+    if (account.getStatus() != UserAccountStatus.INACTIVE) {
+      account.setStatus(UserAccountStatus.INACTIVE);
+      account.setDeletedAt(Instant.now());
+      userAccountRepository.save(account);
+    }
+
+    // Đăng xuất và thu hồi mọi session / refresh token
+    authenticationService.revokeAllTokens(id);
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ACCOUNT_DEACTIVATED,
+            AuditTargetType.USER_ACCOUNT,
+            account.getId(),
+            "Vô hiệu hoá tài khoản: " + account.getEmail(),
+            null,
+            null));
   }
 }

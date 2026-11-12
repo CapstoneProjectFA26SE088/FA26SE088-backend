@@ -19,5 +19,26 @@ public enum AuditAction {
    * UC06: job định kỳ xoá hàng loạt tài khoản PENDING_VERIFICATION quá 24 giờ chưa xác thực email.
    * Actor là System (Scheduler). Target type USER_ACCOUNT, targetId = null (batch).
    */
-  ACCOUNT_UNVERIFIED_PURGED
+  ACCOUNT_UNVERIFIED_PURGED,
+
+  /** ACC-09: Cập nhật thông tin cá nhân tài khoản. */
+  ACCOUNT_PROFILE_UPDATED,
+
+  /** ACC-09: Vô hiệu hoá / xoá mềm tài khoản (chuyển trạng thái sang INACTIVE). */
+  ACCOUNT_DEACTIVATED,
+
+  // --- order ---
+  ORDER_CREATED,
+  ORDER_STATUS_CHANGED,
+
+  // --- payment ---
+  PAYMENT_CREATED,
+  PAYMENT_SUCCEEDED,
+  PAYMENT_FAILED,
+  PAYMENT_REFUNDED,
+  COMMISSION_RECORDED,
+  COMMISSION_DEBT_CREATED,
+  COMMISSION_DEBT_SETTLED,
+  PAYOUT_CREATED,
+  PAYOUT_EXECUTED
 }

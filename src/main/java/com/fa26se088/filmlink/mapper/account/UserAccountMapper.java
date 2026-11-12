@@ -14,6 +14,7 @@ public class UserAccountMapper {
         account.getEmail(),
         account.getFullName(),
         account.getPhoneNumber(),
+        account.getAvatarBlobKey(),
         account.getRole(),
         account.getStatus(),
         account.getEmailVerifiedAt(),

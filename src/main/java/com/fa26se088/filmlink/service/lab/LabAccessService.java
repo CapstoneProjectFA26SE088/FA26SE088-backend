@@ -26,4 +26,14 @@ public interface LabAccessService {
    *     không tồn tại; {@code LAB_ACCESS_DENIED} (403) khi lab thuộc chủ khác
    */
   FilmLab requireOwnedLab(Long ownerAccountId, Long labId);
+
+  /**
+   * Lấy Film Lab theo ID và kiểm tra xem lab có đang mở nhận đơn hay không.
+   *
+   * @param labId ID của Film Lab
+   * @return FilmLab entity
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code LAB_NOT_FOUND} (404) khi lab không tồn tại;
+   *     {@code LAB_NOT_ACCEPTING_ORDERS} (400) khi lab đang tạm đóng nhận đơn
+   */
+  FilmLab getLabForOrdering(Long labId);
 }

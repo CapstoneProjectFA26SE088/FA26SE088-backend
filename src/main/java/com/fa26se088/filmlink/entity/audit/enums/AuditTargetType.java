@@ -9,5 +9,14 @@ package com.fa26se088.filmlink.entity.audit.enums;
  */
 public enum AuditTargetType {
   // --- account ---
-  USER_ACCOUNT
+  USER_ACCOUNT,
+
+  // --- order ---
+  SERVICE_ORDER,
+
+  // --- payment ---
+  PAYMENT,
+  COMMISSION,
+  COMMISSION_DEBT,
+  PAYOUT
 }

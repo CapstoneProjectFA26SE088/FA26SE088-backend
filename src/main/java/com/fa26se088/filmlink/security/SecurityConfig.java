@@ -32,7 +32,7 @@ import org.springframework.web.servlet.HandlerExceptionResolver;
 @EnableMethodSecurity
 public class SecurityConfig {
 
-  /** UC06, UC01, SCR-03: các bước trước khi có access token. */
+  /** UC06, UC01, SCR-03: các bước trước khi có access token; callback VNPay IPN. */
   private static final String[] PUBLIC_POST_PATHS = {
     "/api/v1/auth/register",
     "/api/v1/auth/verify-email",
@@ -41,19 +41,22 @@ public class SecurityConfig {
     "/api/v1/auth/refresh",
     "/api/v1/auth/forgot-password",
     "/api/v1/auth/verify-password-reset-otp",
-    "/api/v1/auth/reset-password"
+    "/api/v1/auth/reset-password",
+    "/api/v1/payments/vnpay/ipn"
   };
 
   /**
-   * Link tải file ký HMAC của storage local (NFR-PRI-02) và danh mục master data công khai (MD-01,
-   * BR-16).
+   * Link tải file ký HMAC của storage local (NFR-PRI-02), danh mục master data công khai (MD-01,
+   * BR-16), callback VNPay IPN & Return.
    */
   private static final String[] PUBLIC_GET_PATHS = {
     "/api/v1/files",
     "/api/v1/film-processes",
     "/api/v1/film-formats",
     "/api/v1/service-types",
-    "/api/v1/film-stocks"
+    "/api/v1/film-stocks",
+    "/api/v1/payments/vnpay/ipn",
+    "/api/v1/payments/vnpay/return"
   };
 
   private static final String[] SWAGGER_PATHS = {

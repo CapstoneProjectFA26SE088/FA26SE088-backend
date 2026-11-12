@@ -5,12 +5,14 @@ import com.fa26se088.filmlink.dto.account.request.ForgotPasswordRequest;
 import com.fa26se088.filmlink.dto.account.request.RegisterRequest;
 import com.fa26se088.filmlink.dto.account.request.ResendOtpRequest;
 import com.fa26se088.filmlink.dto.account.request.ResetPasswordRequest;
+import com.fa26se088.filmlink.dto.account.request.UpdateAccountRequest;
 import com.fa26se088.filmlink.dto.account.request.VerifyEmailRequest;
 import com.fa26se088.filmlink.dto.account.request.VerifyPasswordResetOtpRequest;
 import com.fa26se088.filmlink.dto.account.response.AccountNotificationPreferenceResponse;
 import com.fa26se088.filmlink.dto.account.response.PasswordResetTokenResponse;
 import com.fa26se088.filmlink.dto.account.response.TokenResponse;
 import com.fa26se088.filmlink.dto.account.response.UserAccountResponse;
+import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import java.util.Optional;
 
 /** Vòng đời tài khoản: đăng ký Photographer, xác thực email, hồ sơ của chính mình (UC06), đổi mật khẩu (UC02), quên mật khẩu (SCR-03). */
@@ -117,5 +119,44 @@ public interface UserAccountService {
    * <p>Được gọi từ {@code AccountPurgeUnverifiedJob}; không dùng ở API.
    */
   void purgeUnverifiedAccounts();
+
+  /**
+   * ACC-09: Tra cứu thông tin chi tiết tài khoản theo ID (Read).
+   *
+   * @param id ID tài khoản cần tra cứu
+   * @param currentAccount tài khoản đang thực hiện request (Admin hoặc chính chủ)
+   * @return thông tin chi tiết tài khoản
+   */
+  UserAccountResponse getAccountById(Long id, AuthenticatedAccount currentAccount);
+
+  /**
+   * ACC-09: Tra cứu thông tin chi tiết tài khoản theo Email (Read).
+   *
+   * @param email Email tài khoản cần tra cứu
+   * @param currentAccount tài khoản đang thực hiện request (Admin hoặc chính chủ)
+   * @return thông tin chi tiết tài khoản
+   */
+  UserAccountResponse getAccountByEmail(String email, AuthenticatedAccount currentAccount);
+
+  /**
+   * ACC-09: Chỉnh sửa thông tin cá nhân tài khoản (Update).
+   * Không cho phép sửa trực tiếp Email, Role, Password.
+   *
+   * @param id ID tài khoản cần cập nhật
+   * @param request thông tin cập nhật hợp lệ
+   * @param currentAccount tài khoản đang thực hiện request (Admin hoặc chính chủ)
+   * @return thông tin tài khoản sau khi cập nhật
+   */
+  UserAccountResponse updateAccount(
+      Long id, UpdateAccountRequest request, AuthenticatedAccount currentAccount);
+
+  /**
+   * ACC-09: Vô hiệu hoá tài khoản / xóa mềm (Soft Delete).
+   * Chuyển trạng thái sang INACTIVE, đặt thời điểm deletedAt, đăng xuất và thu hồi mọi session/token.
+   *
+   * @param id ID tài khoản cần vô hiệu hoá
+   * @param currentAccount tài khoản đang thực hiện request (chỉ Admin)
+   */
+  void deactivateAccount(Long id, AuthenticatedAccount currentAccount);
 }
 

@@ -16,8 +16,10 @@ import com.fa26se088.filmlink.dto.account.request.ForgotPasswordRequest;
 import com.fa26se088.filmlink.dto.account.request.RegisterRequest;
 import com.fa26se088.filmlink.dto.account.request.ResendOtpRequest;
 import com.fa26se088.filmlink.dto.account.request.ResetPasswordRequest;
+import com.fa26se088.filmlink.dto.account.request.UpdateAccountRequest;
 import com.fa26se088.filmlink.dto.account.request.VerifyEmailRequest;
 import com.fa26se088.filmlink.dto.account.request.VerifyPasswordResetOtpRequest;
+import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.dto.account.response.AccountNotificationPreferenceResponse;
 import com.fa26se088.filmlink.dto.account.response.PasswordResetTokenResponse;
 import com.fa26se088.filmlink.dto.account.response.TokenResponse;
@@ -803,6 +805,283 @@ class UserAccountServiceImplTest {
         .isInstanceOf(BusinessException.class)
         .extracting(ex -> ((BusinessException) ex).getErrorCode())
         .isEqualTo(ErrorCode.ACCOUNT_INVALID_TOKEN);
+  }
+
+  // ---------------------------------------------------------------------------
+  // ACC-09: Quản lý thông tin tài khoản (RUD)
+  // ---------------------------------------------------------------------------
+
+  private final AuthenticatedAccount adminAuth =
+      new AuthenticatedAccount(999L, "admin@example.com", UserAccountRole.ADMIN);
+  private final AuthenticatedAccount selfAuth =
+      new AuthenticatedAccount(1L, EMAIL, UserAccountRole.PHOTOGRAPHER);
+  private final AuthenticatedAccount otherAuth =
+      new AuthenticatedAccount(2L, "other@example.com", UserAccountRole.PHOTOGRAPHER);
+
+  // --- getAccountById ---
+
+  @Test
+  void getAccountById_byAdmin_success() {
+    UserAccount account = activeAccount("password123");
+    when(userAccountRepository.findById(1L)).thenReturn(Optional.of(account));
+
+    UserAccountResponse response = service.getAccountById(1L, adminAuth);
+
+    assertThat(response).isNotNull();
+    assertThat(response.id()).isEqualTo(1L);
+    assertThat(response.email()).isEqualTo(EMAIL);
+    assertThat(response.fullName()).isEqualTo("Nguyen Van A");
+  }
+
+  @Test
+  void getAccountById_bySelf_success() {
+    UserAccount account = activeAccount("password123");
+    when(userAccountRepository.findById(1L)).thenReturn(Optional.of(account));
+
+    UserAccountResponse response = service.getAccountById(1L, selfAuth);
+
+    assertThat(response).isNotNull();
+    assertThat(response.id()).isEqualTo(1L);
+    assertThat(response.email()).isEqualTo(EMAIL);
+  }
+
+  @Test
+  void getAccountById_byOtherNonAdmin_throwsAccessDenied() {
+    assertThatThrownBy(() -> service.getAccountById(1L, otherAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ACCESS_DENIED));
+    verify(userAccountRepository, never()).findById(any());
+  }
+
+  @Test
+  void getAccountById_unauthenticated_throwsAuthenticationRequired() {
+    assertThatThrownBy(() -> service.getAccountById(1L, null))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.AUTHENTICATION_REQUIRED));
+    verify(userAccountRepository, never()).findById(any());
+  }
+
+  @Test
+  void getAccountById_notFound_throwsResourceNotFound() {
+    when(userAccountRepository.findById(1L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.getAccountById(1L, adminAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.RESOURCE_NOT_FOUND));
+  }
+
+  // --- getAccountByEmail ---
+
+  @Test
+  void getAccountByEmail_byAdmin_success() {
+    UserAccount account = activeAccount("password123");
+    when(userAccountRepository.findByEmail(EMAIL)).thenReturn(Optional.of(account));
+
+    UserAccountResponse response = service.getAccountByEmail("  " + EMAIL + " ", adminAuth);
+
+    assertThat(response).isNotNull();
+    assertThat(response.email()).isEqualTo(EMAIL);
+    verify(userAccountRepository).findByEmail(EMAIL);
+  }
+
+  @Test
+  void getAccountByEmail_bySelf_success() {
+    UserAccount account = activeAccount("password123");
+    when(userAccountRepository.findByEmail(EMAIL)).thenReturn(Optional.of(account));
+
+    UserAccountResponse response = service.getAccountByEmail(EMAIL, selfAuth);
+
+    assertThat(response).isNotNull();
+    assertThat(response.email()).isEqualTo(EMAIL);
+  }
+
+  @Test
+  void getAccountByEmail_byOtherNonAdmin_throwsAccessDenied() {
+    assertThatThrownBy(() -> service.getAccountByEmail(EMAIL, otherAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ACCESS_DENIED));
+    verify(userAccountRepository, never()).findByEmail(any());
+  }
+
+  @Test
+  void getAccountByEmail_blankEmail_throwsValidationError() {
+    assertThatThrownBy(() -> service.getAccountByEmail("   ", adminAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+    verify(userAccountRepository, never()).findByEmail(any());
+  }
+
+  @Test
+  void getAccountByEmail_notFound_throwsResourceNotFound() {
+    when(userAccountRepository.findByEmail(EMAIL)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.getAccountByEmail(EMAIL, adminAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.RESOURCE_NOT_FOUND));
+  }
+
+  // --- updateAccount ---
+
+  @Test
+  void updateAccount_bySelf_updatesFieldsAndRecordsAudit() {
+    UserAccount account = activeAccount("password123");
+    when(userAccountRepository.findById(1L)).thenReturn(Optional.of(account));
+    when(userAccountRepository.save(any(UserAccount.class))).thenAnswer(i -> i.getArgument(0));
+
+    UpdateAccountRequest request =
+        new UpdateAccountRequest(
+            " Tran Van B ",
+            "0912345678",
+            "avatars/1/avatar.png",
+            true,
+            false,
+            true);
+
+    UserAccountResponse response = service.updateAccount(1L, request, selfAuth);
+
+    assertThat(response.fullName()).isEqualTo("Tran Van B");
+    assertThat(response.avatarBlobKey()).isEqualTo("avatars/1/avatar.png");
+    assertThat(account.getFullName()).isEqualTo("Tran Van B");
+    assertThat(account.getPhoneNumber()).isEqualTo("0912345678");
+    assertThat(account.getAvatarBlobKey()).isEqualTo("avatars/1/avatar.png");
+    assertThat(account.isInAppNotificationEnabled()).isTrue();
+    assertThat(account.isEmailNotificationEnabled()).isFalse();
+    assertThat(account.isPushNotificationEnabled()).isTrue();
+
+    verify(userAccountRepository).save(account);
+    verify(auditLogService)
+        .recordSuccess(
+            argThat(
+                entry ->
+                    entry.action() == AuditAction.ACCOUNT_PROFILE_UPDATED
+                        && entry.targetType() == AuditTargetType.USER_ACCOUNT
+                        && entry.targetId().equals(1L)));
+  }
+
+  @Test
+  void updateAccount_byAdmin_success() {
+    UserAccount account = activeAccount("password123");
+    when(userAccountRepository.findById(1L)).thenReturn(Optional.of(account));
+    when(userAccountRepository.save(any(UserAccount.class))).thenAnswer(i -> i.getArgument(0));
+
+    UpdateAccountRequest request =
+        new UpdateAccountRequest("Admin Edited", null, null, null, null, null);
+
+    UserAccountResponse response = service.updateAccount(1L, request, adminAuth);
+
+    assertThat(response.fullName()).isEqualTo("Admin Edited");
+    // Other fields unchanged
+    assertThat(account.getFullName()).isEqualTo("Admin Edited");
+    verify(userAccountRepository).save(account);
+    verify(auditLogService).recordSuccess(any());
+  }
+
+  @Test
+  void updateAccount_byOtherNonAdmin_throwsAccessDenied() {
+    UpdateAccountRequest request =
+        new UpdateAccountRequest("Hacker", null, null, null, null, null);
+
+    assertThatThrownBy(() -> service.updateAccount(1L, request, otherAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ACCESS_DENIED));
+    verify(userAccountRepository, never()).save(any());
+  }
+
+  @Test
+  void updateAccount_accountInactiveOrDeleted_throwsBusinessRuleViolation() {
+    UserAccount inactiveAccount = activeAccount("password123");
+    inactiveAccount.setStatus(UserAccountStatus.INACTIVE);
+    when(userAccountRepository.findById(1L)).thenReturn(Optional.of(inactiveAccount));
+
+    UpdateAccountRequest request =
+        new UpdateAccountRequest("New Name", null, null, null, null, null);
+
+    assertThatThrownBy(() -> service.updateAccount(1L, request, adminAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.BUSINESS_RULE_VIOLATION));
+    verify(userAccountRepository, never()).save(any());
+  }
+
+  @Test
+  void updateAccount_notFound_throwsResourceNotFound() {
+    when(userAccountRepository.findById(1L)).thenReturn(Optional.empty());
+
+    UpdateAccountRequest request =
+        new UpdateAccountRequest("New Name", null, null, null, null, null);
+
+    assertThatThrownBy(() -> service.updateAccount(1L, request, adminAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.RESOURCE_NOT_FOUND));
+    verify(userAccountRepository, never()).save(any());
+  }
+
+  // --- deactivateAccount ---
+
+  @Test
+  void deactivateAccount_byAdmin_setsInactiveRevokesTokensAndRecordsAudit() {
+    UserAccount account = activeAccount("password123");
+    when(userAccountRepository.findById(1L)).thenReturn(Optional.of(account));
+
+    service.deactivateAccount(1L, adminAuth);
+
+    assertThat(account.getStatus()).isEqualTo(UserAccountStatus.INACTIVE);
+    assertThat(account.getDeletedAt()).isNotNull();
+    verify(userAccountRepository).save(account);
+    verify(authenticationService).revokeAllTokens(1L);
+    verify(auditLogService)
+        .recordSuccess(
+            argThat(
+                entry ->
+                    entry.action() == AuditAction.ACCOUNT_DEACTIVATED
+                        && entry.targetType() == AuditTargetType.USER_ACCOUNT
+                        && entry.targetId().equals(1L)));
+  }
+
+  @Test
+  void deactivateAccount_alreadyInactive_isIdempotent() {
+    UserAccount account = activeAccount("password123");
+    account.setStatus(UserAccountStatus.INACTIVE);
+    Instant priorDeletedAt = Instant.now().minusSeconds(100);
+    account.setDeletedAt(priorDeletedAt);
+    when(userAccountRepository.findById(1L)).thenReturn(Optional.of(account));
+
+    service.deactivateAccount(1L, adminAuth);
+
+    assertThat(account.getStatus()).isEqualTo(UserAccountStatus.INACTIVE);
+    assertThat(account.getDeletedAt()).isEqualTo(priorDeletedAt); // Không overwrite
+    verify(userAccountRepository, never()).save(account);
+    verify(authenticationService).revokeAllTokens(1L); // Vẫn gọi thu hồi tokens
+    verify(auditLogService).recordSuccess(any());
+  }
+
+  @Test
+  void deactivateAccount_byNonAdmin_throwsAccessDenied() {
+    assertThatThrownBy(() -> service.deactivateAccount(1L, selfAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ACCESS_DENIED));
+    verify(userAccountRepository, never()).findById(any());
+    verify(authenticationService, never()).revokeAllTokens(any());
+  }
+
+  @Test
+  void deactivateAccount_notFound_throwsResourceNotFound() {
+    when(userAccountRepository.findById(1L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> service.deactivateAccount(1L, adminAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.RESOURCE_NOT_FOUND));
+    verify(authenticationService, never()).revokeAllTokens(any());
   }
 }
 
