@@ -41,6 +41,14 @@ public enum ErrorCode {
   /** UC02: mật khẩu mới trùng với mật khẩu hiện tại. */
   ACCOUNT_NEW_PASSWORD_SAME_AS_OLD(HttpStatus.BAD_REQUEST, null),
   ACCOUNT_EMAIL_ALREADY_EXISTS(HttpStatus.CONFLICT, null),
+  /** UC07: số lượng file giấy tờ pháp lý không nằm trong khoảng 1..5 file. */
+  LAB_APPLICATION_DOCUMENT_COUNT_INVALID(HttpStatus.BAD_REQUEST, null),
+  /** BR-16: dịch vụ, quy trình hoặc khổ phim trong đơn đăng ký không tồn tại hoặc không ACTIVE. */
+  LAB_APPLICATION_CATALOG_NOT_ACTIVE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC08: không tìm thấy đơn đăng ký lab. */
+  LAB_APPLICATION_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  /** UC08: đơn đăng ký lab đã được duyệt hoặc từ chối trước đó. */
+  LAB_APPLICATION_ALREADY_REVIEWED(HttpStatus.CONFLICT, null),
 
   // --- lab ---
   LAB_NOT_FOUND(HttpStatus.NOT_FOUND, null),
