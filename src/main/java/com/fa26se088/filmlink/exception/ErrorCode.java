@@ -49,6 +49,8 @@ public enum ErrorCode {
   LAB_APPLICATION_NOT_FOUND(HttpStatus.NOT_FOUND, null),
   /** UC08: đơn đăng ký lab đã được duyệt hoặc từ chối trước đó. */
   LAB_APPLICATION_ALREADY_REVIEWED(HttpStatus.CONFLICT, null),
+  /** UC08: xung đột phiên bản (Optimistic Locking) khi 2 Admin cùng xử lý một đơn đăng ký lab. */
+  LAB_APPLICATION_CONFLICT(HttpStatus.CONFLICT, null),
 
   // --- lab ---
   LAB_NOT_FOUND(HttpStatus.NOT_FOUND, null),

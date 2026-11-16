@@ -22,6 +22,12 @@ public enum AuditAction {
    */
   ACCOUNT_UNVERIFIED_PURGED,
 
+  /** UC08: Admin duyệt đơn đăng ký mở Film Lab. */
+  LAB_APPLICATION_APPROVED,
+
+  /** UC08: Admin từ chối đơn đăng ký mở Film Lab. */
+  LAB_APPLICATION_REJECTED,
+
   // --- masterdata (MD-02, UC54) ---
   MASTERDATA_CREATED,
   MASTERDATA_UPDATED,

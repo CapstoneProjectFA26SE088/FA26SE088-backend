@@ -1,6 +1,7 @@
 package com.fa26se088.filmlink.mapper.account;
 
 import com.fa26se088.filmlink.client.storage.StorageClient;
+import com.fa26se088.filmlink.dto.account.response.AdminLabApplicationSummaryResponse;
 import com.fa26se088.filmlink.dto.account.response.LabApplicationDocumentResponse;
 import com.fa26se088.filmlink.dto.account.response.LabApplicationResponse;
 import com.fa26se088.filmlink.entity.account.LabRegistrationApplication;
@@ -40,6 +41,10 @@ public class LabApplicationMapper {
         application.getContactPhone(),
         application.getStatus(),
         application.isDuplicateSuspected(),
+        application.getRejectionReason(),
+        application.getReviewedByAccountId(),
+        application.getReviewedAt(),
+        application.getVersion(),
         application.getServiceTypes().stream()
             .map(BaseEntity::getId)
             .collect(Collectors.toSet()),
@@ -50,6 +55,25 @@ public class LabApplicationMapper {
             .map(BaseEntity::getId)
             .collect(Collectors.toSet()),
         documentResponses,
+        application.getCreatedAt());
+  }
+
+  /**
+   * Chuyển đổi entity đơn đăng ký sang DTO tóm tắt cho Admin xem danh sách (UC08).
+   */
+  public AdminLabApplicationSummaryResponse toSummaryResponse(
+      LabRegistrationApplication application) {
+    return new AdminLabApplicationSummaryResponse(
+        application.getId(),
+        application.getApplicationCode(),
+        application.getLabName(),
+        application.getTaxCode(),
+        application.getProvince(),
+        application.getDistrict(),
+        application.getContactEmail(),
+        application.getContactPhone(),
+        application.getStatus(),
+        application.isDuplicateSuspected(),
         application.getCreatedAt());
   }
 
