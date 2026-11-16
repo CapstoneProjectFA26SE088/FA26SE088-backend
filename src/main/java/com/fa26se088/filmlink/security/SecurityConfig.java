@@ -41,7 +41,8 @@ public class SecurityConfig {
     "/api/v1/auth/refresh",
     "/api/v1/auth/forgot-password",
     "/api/v1/auth/verify-password-reset-otp",
-    "/api/v1/auth/reset-password"
+    "/api/v1/auth/reset-password",
+    "/api/v1/public/lab-applications"
   };
 
   /**
@@ -53,7 +54,8 @@ public class SecurityConfig {
     "/api/v1/film-processes",
     "/api/v1/film-formats",
     "/api/v1/service-types",
-    "/api/v1/film-stocks"
+    "/api/v1/film-stocks",
+    "/api/v1/public/lab-applications/**"
   };
 
   private static final String[] SWAGGER_PATHS = {
