@@ -1,6 +1,7 @@
 package com.fa26se088.filmlink.service.account;
 
 import com.fa26se088.filmlink.dto.account.response.AdminLabApplicationSummaryResponse;
+import com.fa26se088.filmlink.dto.account.response.LabApplicationResponse;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.entity.account.enums.LabApplicationStatus;
 import org.springframework.data.domain.Pageable;
@@ -19,4 +20,12 @@ public interface LabApplicationAdminService {
    */
   PageResponse<AdminLabApplicationSummaryResponse> getApplications(
       LabApplicationStatus status, Pageable pageable);
+
+  /**
+   * Xem chi tiết một đơn đăng ký mở lab theo ID kèm signed URL tài liệu (UC08, NFR-PRI-02).
+   *
+   * @param id ID của đơn đăng ký
+   * @return thông tin chi tiết đơn đăng ký kèm link tải tài liệu pháp lý
+   */
+  LabApplicationResponse getApplicationDetail(Long id);
 }

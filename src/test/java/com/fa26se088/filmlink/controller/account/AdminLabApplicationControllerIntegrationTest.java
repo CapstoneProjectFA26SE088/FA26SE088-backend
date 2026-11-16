@@ -42,6 +42,7 @@ class AdminLabApplicationControllerIntegrationTest {
 
   private String adminToken;
   private String photographerToken;
+  private Long savedApp1Id;
 
   @BeforeEach
   void setUp() {
@@ -108,7 +109,7 @@ class AdminLabApplicationControllerIntegrationTest {
     app2.setReviewedAt(Instant.now());
     app2.setDuplicateSuspected(false);
 
-    applicationRepository.save(app1);
+    savedApp1Id = applicationRepository.save(app1).getId();
     applicationRepository.save(app2);
   }
 
@@ -155,6 +156,42 @@ class AdminLabApplicationControllerIntegrationTest {
   void getApplications_forbiddenRole_returns403() throws Exception {
     mockMvc
         .perform(get(API_PATH).header(HttpHeaders.AUTHORIZATION, "Bearer " + photographerToken))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  @DisplayName("Admin xem chi tiết đơn đăng ký theo ID thành công -> 200 OK")
+  void getApplicationDetail_asAdmin_success_returns200() throws Exception {
+    mockMvc
+        .perform(
+            get(API_PATH + "/" + savedApp1Id)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id", is(savedApp1Id.intValue())))
+        .andExpect(jsonPath("$.applicationCode", is("LA261114000001")))
+        .andExpect(jsonPath("$.labName", is("Saigon Film Lab")))
+        .andExpect(jsonPath("$.status", is("PENDING_REVIEW")))
+        .andExpect(jsonPath("$.isDuplicateSuspected", is(true)));
+  }
+
+  @Test
+  @DisplayName("Admin xem chi tiết ID không tồn tại -> 404 Not Found")
+  void getApplicationDetail_notFound_returns404() throws Exception {
+    mockMvc
+        .perform(
+            get(API_PATH + "/999999")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorCode", is("LAB_APPLICATION_NOT_FOUND")));
+  }
+
+  @Test
+  @DisplayName("User thường gọi API xem chi tiết -> 403 Forbidden")
+  void getApplicationDetail_forbiddenRole_returns403() throws Exception {
+    mockMvc
+        .perform(
+            get(API_PATH + "/" + savedApp1Id)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + photographerToken))
         .andExpect(status().isForbidden());
   }
 }

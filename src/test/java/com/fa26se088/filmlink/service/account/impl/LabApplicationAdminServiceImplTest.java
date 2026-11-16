@@ -1,17 +1,28 @@
 package com.fa26se088.filmlink.service.account.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fa26se088.filmlink.client.storage.StorageClient;
 import com.fa26se088.filmlink.dto.account.response.AdminLabApplicationSummaryResponse;
+import com.fa26se088.filmlink.dto.account.response.LabApplicationResponse;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.entity.account.LabRegistrationApplication;
+import com.fa26se088.filmlink.entity.account.LabRegistrationDocument;
 import com.fa26se088.filmlink.entity.account.enums.LabApplicationStatus;
+import com.fa26se088.filmlink.exception.BusinessException;
+import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.mapper.account.LabApplicationMapper;
 import com.fa26se088.filmlink.repository.account.LabRegistrationApplicationRepository;
+import java.net.URI;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,12 +38,15 @@ import org.springframework.test.util.ReflectionTestUtils;
 class LabApplicationAdminServiceImplTest {
 
   @Mock private LabRegistrationApplicationRepository applicationRepository;
+  @Mock private StorageClient storageClient;
 
   private LabApplicationAdminServiceImpl adminService;
 
   @BeforeEach
   void setUp() {
-    adminService = new LabApplicationAdminServiceImpl(applicationRepository, new LabApplicationMapper());
+    adminService =
+        new LabApplicationAdminServiceImpl(
+            applicationRepository, storageClient, new LabApplicationMapper());
   }
 
   @Test
@@ -43,7 +57,7 @@ class LabApplicationAdminServiceImplTest {
     LabRegistrationApplication app1 = createApp(1L, "LA261114000001", "Lab A", true, LabApplicationStatus.PENDING_REVIEW);
     LabRegistrationApplication app2 = createApp(2L, "LA261114000002", "Lab B", false, LabApplicationStatus.PENDING_REVIEW);
 
-    when(applicationRepository.findByStatus(LabApplicationStatus.PENDING_REVIEW, pageable))
+    when(applicationRepository.findByStatus(eq(LabApplicationStatus.PENDING_REVIEW), any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(app1, app2), pageable, 2));
 
     PageResponse<AdminLabApplicationSummaryResponse> result =
@@ -64,7 +78,7 @@ class LabApplicationAdminServiceImplTest {
     assertThat(second.id()).isEqualTo(2L);
     assertThat(second.isDuplicateSuspected()).isFalse();
 
-    verify(applicationRepository).findByStatus(LabApplicationStatus.PENDING_REVIEW, pageable);
+    verify(applicationRepository).findByStatus(eq(LabApplicationStatus.PENDING_REVIEW), any(Pageable.class));
   }
 
   @Test
@@ -73,14 +87,56 @@ class LabApplicationAdminServiceImplTest {
     Pageable pageable = PageRequest.of(0, 10);
     LabRegistrationApplication app = createApp(10L, "LA261114000010", "Lab C", false, LabApplicationStatus.APPROVED);
 
-    when(applicationRepository.findAll(pageable))
+    when(applicationRepository.findAll(any(Pageable.class)))
         .thenReturn(new PageImpl<>(List.of(app), pageable, 1));
 
     PageResponse<AdminLabApplicationSummaryResponse> result = adminService.getApplications(null, pageable);
 
     assertThat(result.totalElements()).isEqualTo(1);
     assertThat(result.content().getFirst().status()).isEqualTo(LabApplicationStatus.APPROVED);
-    verify(applicationRepository).findAll(pageable);
+    verify(applicationRepository).findAll(any(Pageable.class));
+  }
+
+  @Test
+  @DisplayName("Admin xem chi tiết đơn đăng ký theo ID thành công -> trả về đầy đủ kèm signed URL tài liệu")
+  void getApplicationDetail_success() {
+    LabRegistrationApplication app = createApp(5L, "LA261114000005", "Saigon Darkroom", false, LabApplicationStatus.PENDING_REVIEW);
+
+    LabRegistrationDocument doc = new LabRegistrationDocument();
+    ReflectionTestUtils.setField(doc, "id", 101L);
+    doc.setFileName("business_license.pdf");
+    doc.setBlobKey("lab-doc/2026/license.pdf");
+    doc.setContentType("application/pdf");
+    doc.setSizeBytes(1024L);
+    app.addDocument(doc);
+
+    when(applicationRepository.findById(5L)).thenReturn(Optional.of(app));
+    when(storageClient.signedUrl(anyString())).thenReturn(URI.create("https://storage.local/signed/license.pdf"));
+
+    LabApplicationResponse response = adminService.getApplicationDetail(5L);
+
+    assertThat(response).isNotNull();
+    assertThat(response.id()).isEqualTo(5L);
+    assertThat(response.applicationCode()).isEqualTo("LA261114000005");
+    assertThat(response.labName()).isEqualTo("Saigon Darkroom");
+    assertThat(response.documents()).hasSize(1);
+    assertThat(response.documents().getFirst().url()).isEqualTo("https://storage.local/signed/license.pdf");
+
+    verify(applicationRepository).findById(5L);
+    verify(storageClient).signedUrl("lab-doc/2026/license.pdf");
+  }
+
+  @Test
+  @DisplayName("Admin xem chi tiết ID không tồn tại -> ném ngoại lệ LAB_APPLICATION_NOT_FOUND")
+  void getApplicationDetail_notFound_throwsException() {
+    when(applicationRepository.findById(999L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> adminService.getApplicationDetail(999L))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.LAB_APPLICATION_NOT_FOUND));
+
+    verify(applicationRepository).findById(999L);
   }
 
   private LabRegistrationApplication createApp(
@@ -90,6 +146,7 @@ class LabApplicationAdminServiceImplTest {
     app.setApplicationCode(code);
     app.setLabName(name);
     app.setTaxCode("0123456789");
+    app.setAddressLine("123 Nguyen Hue");
     app.setProvince("TP Ho Chi Minh");
     app.setDistrict("Quan 1");
     app.setContactEmail("test@lab.vn");
