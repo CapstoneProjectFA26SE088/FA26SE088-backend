@@ -1,6 +1,7 @@
 package com.fa26se088.filmlink.service.account;
 
 import com.fa26se088.filmlink.dto.account.request.ApproveLabApplicationRequest;
+import com.fa26se088.filmlink.dto.account.request.RejectLabApplicationRequest;
 import com.fa26se088.filmlink.dto.account.response.AdminLabApplicationSummaryResponse;
 import com.fa26se088.filmlink.dto.account.response.LabApplicationResponse;
 import com.fa26se088.filmlink.dto.common.PageResponse;
@@ -41,4 +42,16 @@ public interface LabApplicationAdminService {
    */
   LabApplicationResponse approveApplication(
       Long id, ApproveLabApplicationRequest request, Long adminAccountId);
+
+  /**
+   * Từ chối đơn đăng ký mở Film Lab: cập nhật trạng thái REJECTED kèm lý do, ghi audit log và gửi
+   * email thông báo cho người nộp đơn sau khi commit (UC08).
+   *
+   * @param id ID của đơn đăng ký
+   * @param request thông tin version và lý do từ chối (10-500 ký tự)
+   * @param adminAccountId ID tài khoản Admin thực hiện từ chối
+   * @return thông tin đơn đăng ký sau khi chuyển sang REJECTED
+   */
+  LabApplicationResponse rejectApplication(
+      Long id, RejectLabApplicationRequest request, Long adminAccountId);
 }

@@ -3,6 +3,7 @@ package com.fa26se088.filmlink.service.account.impl;
 import com.fa26se088.filmlink.client.notification.EmailClient;
 import com.fa26se088.filmlink.client.storage.StorageClient;
 import com.fa26se088.filmlink.dto.account.request.ApproveLabApplicationRequest;
+import com.fa26se088.filmlink.dto.account.request.RejectLabApplicationRequest;
 import com.fa26se088.filmlink.dto.account.response.AdminLabApplicationSummaryResponse;
 import com.fa26se088.filmlink.dto.account.response.LabApplicationResponse;
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
@@ -203,6 +204,77 @@ public class LabApplicationAdminServiceImpl implements LabApplicationAdminServic
     return mapper.toResponse(application, storageClient);
   }
 
+  @Override
+  @Transactional
+  public LabApplicationResponse rejectApplication(
+      Long id, RejectLabApplicationRequest request, Long adminAccountId) {
+    LabRegistrationApplication application = findApplicationOrThrow(id);
+
+    // 1. Chỉ cho phép từ chối đơn ở trạng thái PENDING_REVIEW
+    if (application.getStatus() != LabApplicationStatus.PENDING_REVIEW) {
+      throw new BusinessException(
+          ErrorCode.LAB_APPLICATION_ALREADY_REVIEWED,
+          "Đơn đăng ký đã được xử lý hoặc không ở trạng thái chờ duyệt (PENDING_REVIEW)");
+    }
+
+    // 2. Kiểm tra version (Optimistic Locking) -> 409 nếu xung đột
+    if (!Objects.equals(application.getVersion(), request.version())) {
+      throw new BusinessException(
+          ErrorCode.LAB_APPLICATION_CONFLICT,
+          "Đơn đăng ký đã bị thay đổi bởi một Admin khác. Vui lòng tải lại trang và thử lại.",
+          Map.of(
+              "currentVersion", application.getVersion(),
+              "submittedVersion", request.version()));
+    }
+
+    String trimmedReason = request.reason().trim();
+    if (trimmedReason.length() < 10 || trimmedReason.length() > 500) {
+      throw new BusinessException(
+          ErrorCode.VALIDATION_ERROR, "Lý do từ chối phải từ 10 đến 500 ký tự.");
+    }
+
+    // 3. Cập nhật trạng thái đơn sang REJECTED
+    application.setStatus(LabApplicationStatus.REJECTED);
+    application.setRejectionReason(trimmedReason);
+    application.setReviewedByAccountId(adminAccountId);
+    application.setReviewedAt(Instant.now());
+
+    try {
+      application = applicationRepository.saveAndFlush(application);
+    } catch (OptimisticLockingFailureException ex) {
+      throw new BusinessException(
+          ErrorCode.LAB_APPLICATION_CONFLICT,
+          "Đơn đăng ký đã bị thay đổi bởi một Admin khác. Vui lòng tải lại trang và thử lại.");
+    }
+
+    // 4. Ghi vết Audit Log
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.LAB_APPLICATION_REJECTED,
+            AuditTargetType.LAB_REGISTRATION_APPLICATION,
+            application.getId(),
+            "Admin từ chối đơn đăng ký mở Film Lab: " + application.getApplicationCode(),
+            Map.of("status", LabApplicationStatus.PENDING_REVIEW.name()),
+            Map.of(
+                "status", LabApplicationStatus.REJECTED.name(),
+                "rejectionReason", trimmedReason)));
+
+    // 5. Sau khi commit transaction thành công: Gửi email thông báo lý do từ chối
+    String contactEmail = application.getContactEmail();
+    String labName = application.getLabName();
+    String applicationCode = application.getApplicationCode();
+    runAfterCommit(
+        () -> sendRejectionEmail(contactEmail, labName, applicationCode, trimmedReason));
+
+    log.info(
+        "Từ chối đơn đăng ký lab: id={}, code={}, reason={}",
+        application.getId(),
+        applicationCode,
+        trimmedReason);
+
+    return mapper.toResponse(application, storageClient);
+  }
+
   private LabRegistrationApplication findApplicationOrThrow(Long id) {
     return applicationRepository
         .findById(id)
@@ -271,6 +343,30 @@ public class LabApplicationAdminServiceImpl implements LabApplicationAdminServic
       emailClient.send(recipientEmail, subject, body);
     } catch (Exception e) {
       log.warn("Không thể gửi email thông báo duyệt đơn tới {}: {}", recipientEmail, e.getMessage());
+    }
+  }
+
+  private void sendRejectionEmail(
+      String recipientEmail, String labName, String applicationCode, String reason) {
+    try {
+      String subject =
+          "FilmLink - Thông báo kết quả xét duyệt đơn đăng ký mở Film Lab ["
+              + applicationCode
+              + "]";
+      String body =
+          String.format(
+              "Xin chào %s,\n\n"
+                  + "Đơn đăng ký mở phòng lab (mã hồ sơ: %s) của bạn chưa được phê duyệt.\n"
+                  + "Lý do từ chối: %s\n\n"
+                  + "Bạn có thể điều chỉnh thông tin và nộp lại hồ sơ mới trên hệ thống FilmLink.\n\n"
+                  + "Trân trọng,\nĐội ngũ FilmLink.",
+              labName, applicationCode, reason);
+      emailClient.send(recipientEmail, subject, body);
+    } catch (Exception e) {
+      log.warn(
+          "Không thể gửi email thông báo từ chối đơn tới {}: {}",
+          recipientEmail,
+          e.getMessage());
     }
   }
 }

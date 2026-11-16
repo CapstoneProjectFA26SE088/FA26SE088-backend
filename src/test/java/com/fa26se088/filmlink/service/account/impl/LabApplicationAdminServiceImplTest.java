@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import com.fa26se088.filmlink.client.notification.EmailClient;
 import com.fa26se088.filmlink.client.storage.StorageClient;
 import com.fa26se088.filmlink.dto.account.request.ApproveLabApplicationRequest;
+import com.fa26se088.filmlink.dto.account.request.RejectLabApplicationRequest;
 import com.fa26se088.filmlink.dto.account.response.AdminLabApplicationSummaryResponse;
 import com.fa26se088.filmlink.dto.account.response.LabApplicationResponse;
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
@@ -275,6 +276,65 @@ class LabApplicationAdminServiceImplTest {
 
     verify(userAccountRepository, never()).saveAndFlush(any());
     verify(eventPublisher, never()).publishEvent(any());
+  }
+
+  @Test
+  @DisplayName(
+      "TC-SM02-03: Admin từ chối đơn PENDING_REVIEW thành công -> REJECTED, lưu lý do, ghi audit, gửi email")
+  void rejectApplication_success() {
+    LabRegistrationApplication app =
+        createApp(
+            20L, "LA261116REJECT", "Hue Film Lab", false, LabApplicationStatus.PENDING_REVIEW);
+    app.setVersion(0);
+
+    when(applicationRepository.findById(20L)).thenReturn(Optional.of(app));
+    when(applicationRepository.saveAndFlush(any(LabRegistrationApplication.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    RejectLabApplicationRequest request =
+        new RejectLabApplicationRequest(0, "Giấy phép kinh doanh không rõ nét và thiếu con dấu");
+
+    LabApplicationResponse response = adminService.rejectApplication(20L, request, 99L);
+
+    assertThat(response.status()).isEqualTo(LabApplicationStatus.REJECTED);
+    assertThat(response.rejectionReason())
+        .isEqualTo("Giấy phép kinh doanh không rõ nét và thiếu con dấu");
+    assertThat(response.reviewedByAccountId()).isEqualTo(99L);
+    assertThat(response.reviewedAt()).isNotNull();
+
+    // Không tạo tài khoản và không phát sự kiện
+    verify(userAccountRepository, never()).saveAndFlush(any());
+    verify(eventPublisher, never()).publishEvent(any());
+
+    // Kiểm tra ghi Audit Log
+    ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+    verify(auditLogService).recordSuccess(auditCaptor.capture());
+    AuditEntry auditEntry = auditCaptor.getValue();
+    assertThat(auditEntry.action()).isEqualTo(AuditAction.LAB_APPLICATION_REJECTED);
+    assertThat(auditEntry.targetType()).isEqualTo(AuditTargetType.LAB_REGISTRATION_APPLICATION);
+    assertThat(auditEntry.targetId()).isEqualTo(20L);
+
+    // Kiểm tra gửi email thông báo từ chối
+    verify(emailClient).send(eq("test@lab.vn"), anyString(), anyString());
+  }
+
+  @Test
+  @DisplayName("Từ chối đơn sai version -> ném 409 LAB_APPLICATION_CONFLICT")
+  void rejectApplication_versionMismatch_throwsConflict() {
+    LabRegistrationApplication app =
+        createApp(21L, "LA261116000021", "Lab Z", false, LabApplicationStatus.PENDING_REVIEW);
+    app.setVersion(3);
+    when(applicationRepository.findById(21L)).thenReturn(Optional.of(app));
+
+    RejectLabApplicationRequest request =
+        new RejectLabApplicationRequest(0, "Hồ sơ pháp lý không hợp lệ theo quy định");
+
+    assertThatThrownBy(() -> adminService.rejectApplication(21L, request, 99L))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.LAB_APPLICATION_CONFLICT));
+
+    verify(applicationRepository, never()).saveAndFlush(any());
   }
 
   private LabRegistrationApplication createApp(

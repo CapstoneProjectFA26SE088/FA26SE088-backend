@@ -302,4 +302,66 @@ class AdminLabApplicationControllerIntegrationTest {
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.errorCode", is("LAB_APPLICATION_CONFLICT")));
   }
+
+  @Test
+  @DisplayName(
+      "TC-SM02-03: Admin từ chối đơn PENDING_REVIEW hợp lệ -> 200 OK, REJECTED, lưu lý do, ghi audit, gửi email")
+  void rejectApplication_asAdmin_success_updatesStatusAndSendsEmail() throws Exception {
+    String requestBody =
+        """
+        {
+          "version": 0,
+          "reason": "Giấy phép đăng ký kinh doanh bị mờ và không khớp mã số thuế"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post(API_PATH + "/" + savedApp1Id + "/reject")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id", is(savedApp1Id.intValue())))
+        .andExpect(jsonPath("$.status", is("REJECTED")))
+        .andExpect(
+            jsonPath(
+                "$.rejectionReason",
+                is("Giấy phép đăng ký kinh doanh bị mờ và không khớp mã số thuế")))
+        .andExpect(jsonPath("$.reviewedByAccountId").isNumber())
+        .andExpect(jsonPath("$.reviewedAt").isNotEmpty());
+
+    List<AuditLog> logs =
+        auditLogRepository
+            .findAll(
+                AuditLogRepository.byTarget(
+                    AuditTargetType.LAB_REGISTRATION_APPLICATION, savedApp1Id),
+                PageRequest.of(0, 10))
+            .getContent();
+    assertThat(logs).isNotEmpty();
+    assertThat(logs.getFirst().getAction()).isEqualTo(AuditAction.LAB_APPLICATION_REJECTED);
+
+    verify(emailClient).send(eq("saigon@lab.vn"), anyString(), anyString());
+  }
+
+  @Test
+  @DisplayName("TC-F03-02: Admin từ chối đơn với lý do dưới 10 ký tự -> 400 Bad Request")
+  void rejectApplication_shortReason_returns400() throws Exception {
+    String requestBody =
+        """
+        {
+          "version": 0,
+          "reason": "Quá ngắn"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post(API_PATH + "/" + savedApp1Id + "/reject")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errorCode", is("VALIDATION_ERROR")));
+  }
 }

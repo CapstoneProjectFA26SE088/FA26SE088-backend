@@ -1,6 +1,7 @@
 package com.fa26se088.filmlink.controller.account;
 
 import com.fa26se088.filmlink.dto.account.request.ApproveLabApplicationRequest;
+import com.fa26se088.filmlink.dto.account.request.RejectLabApplicationRequest;
 import com.fa26se088.filmlink.dto.account.response.AdminLabApplicationSummaryResponse;
 import com.fa26se088.filmlink.dto.account.response.LabApplicationResponse;
 import com.fa26se088.filmlink.dto.common.PageResponse;
@@ -65,5 +66,16 @@ public class AdminLabApplicationController {
       @AuthenticationPrincipal AuthenticatedAccount account) {
     Long adminAccountId = account != null ? account.id() : null;
     return labApplicationAdminService.approveApplication(id, request, adminAccountId);
+  }
+
+  /** Từ chối đơn đăng ký mở lab kèm lý do 10–500 ký tự, ghi audit và gửi email thông báo (UC08). */
+  @PostMapping("/{id}/reject")
+  @Operation(summary = "Từ chối đơn đăng ký mở lab (kèm lý do 10-500 ký tự, ghi audit)")
+  public LabApplicationResponse rejectApplication(
+      @PathVariable Long id,
+      @Valid @RequestBody RejectLabApplicationRequest request,
+      @AuthenticationPrincipal AuthenticatedAccount account) {
+    Long adminAccountId = account != null ? account.id() : null;
+    return labApplicationAdminService.rejectApplication(id, request, adminAccountId);
   }
 }
