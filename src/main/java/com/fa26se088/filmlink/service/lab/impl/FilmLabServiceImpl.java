@@ -20,6 +20,7 @@ import com.fa26se088.filmlink.mapper.lab.FilmLabMapper;
 import com.fa26se088.filmlink.repository.lab.FilmLabImageRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabOpeningHourRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabRepository;
+import com.fa26se088.filmlink.repository.lab.ServicePackageRepository;
 import com.fa26se088.filmlink.service.account.event.LabRegistrationApprovedEvent;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.FilmLabService;
@@ -55,9 +56,15 @@ public class FilmLabServiceImpl implements FilmLabService {
   private static final int DAYS_PER_WEEK = 7;
   private static final String ACCEPTING_ORDERS = "acceptingOrders";
 
+  /** Giá trị của property {@code missing} khi từ chối bật nhận đơn (BR-57, BR-34). */
+  static final String MISSING_MACHINES = "MACHINES";
+
+  static final String MISSING_PACKAGE_ON_SALE = "ON_SALE_PACKAGE";
+
   private final FilmLabRepository filmLabRepository;
   private final FilmLabOpeningHourRepository filmLabOpeningHourRepository;
   private final FilmLabImageRepository filmLabImageRepository;
+  private final ServicePackageRepository servicePackageRepository;
   private final LabAccessService labAccessService;
   private final MachineReadiness machineReadiness;
   private final StorageClient storageClient;
@@ -229,9 +236,11 @@ public class FilmLabServiceImpl implements FilmLabService {
   }
 
   /**
-   * BR-57: chỉ bật nhận đơn khi lab có ít nhất một máy PROCESSOR và một máy SCANNER đang ACTIVE.
-   * Tắt luôn được; đơn đang xử lý vẫn chạy tiếp (UC12). BR-32: ghi audit log khi trạng thái thay
-   * đổi; gửi lại đúng trạng thái hiện tại thì không làm gì.
+   * BR-57, BR-34: chỉ bật nhận đơn khi lab có ít nhất một máy PROCESSOR và một máy SCANNER đang
+   * ACTIVE <b>và</b> ít nhất một gói {@code ON_SALE}; thiếu điều kiện nào thì báo {@code
+   * LAB_MACHINES_NOT_READY} (MSG32) kèm thông điệp nói rõ thiếu gì và property {@code missing}. Tắt
+   * luôn được, không kiểm; đơn đang xử lý vẫn chạy tiếp (UC12). BR-32: ghi audit log khi trạng thái
+   * thay đổi; gửi lại đúng trạng thái hiện tại thì không làm gì.
    */
   @Override
   @Transactional
@@ -243,11 +252,8 @@ public class FilmLabServiceImpl implements FilmLabService {
     if (before == after) {
       return toProfileResponse(lab);
     }
-    if (after && !machineReadiness.hasActiveProcessorAndScanner(lab.getId())) {
-      throw new BusinessException(
-          ErrorCode.LAB_MACHINES_NOT_READY,
-          "Cần khai báo ít nhất một máy tráng (PROCESSOR) và một máy scan (SCANNER) đang hoạt động"
-              + " trước khi nhận đơn.");
+    if (after) {
+      requireReadyToAcceptOrders(lab.getId());
     }
 
     lab.setAcceptingOrders(after);
@@ -261,6 +267,47 @@ public class FilmLabServiceImpl implements FilmLabService {
             Map.of(ACCEPTING_ORDERS, before),
             Map.of(ACCEPTING_ORDERS, after)));
     return toProfileResponse(lab);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public boolean isReadyToAcceptOrders(Long filmLabId) {
+    return orderReadiness(filmLabId).ready();
+  }
+
+  /** BR-57, BR-34: ném {@code LAB_MACHINES_NOT_READY} nếu lab chưa đủ điều kiện nhận đơn. */
+  private void requireReadyToAcceptOrders(Long filmLabId) {
+    OrderReadiness readiness = orderReadiness(filmLabId);
+    if (readiness.ready()) {
+      return;
+    }
+    List<String> missing = new ArrayList<>(2);
+    List<String> parts = new ArrayList<>(2);
+    if (!readiness.machinesReady()) {
+      missing.add(MISSING_MACHINES);
+      parts.add("ít nhất một máy tráng (PROCESSOR) và một máy scan (SCANNER) đang hoạt động");
+    }
+    if (!readiness.hasPackageOnSale()) {
+      missing.add(MISSING_PACKAGE_ON_SALE);
+      parts.add("ít nhất một gói dịch vụ đang bán (ON_SALE)");
+    }
+    throw new BusinessException(
+        ErrorCode.LAB_MACHINES_NOT_READY,
+        "Cần có " + String.join(" và ", parts) + " trước khi nhận đơn.",
+        Map.of("missing", missing));
+  }
+
+  private OrderReadiness orderReadiness(Long filmLabId) {
+    return new OrderReadiness(
+        machineReadiness.hasActiveProcessorAndScanner(filmLabId),
+        servicePackageRepository.existsDisplayablePackageOnSale(filmLabId));
+  }
+
+  /** Hai điều kiện của cổng nhận đơn, tách riêng để thông điệp lỗi nói đúng phần còn thiếu. */
+  private record OrderReadiness(boolean machinesReady, boolean hasPackageOnSale) {
+    boolean ready() {
+      return machinesReady && hasPackageOnSale;
+    }
   }
 
   private FilmLabProfileResponse toProfileResponse(FilmLab lab) {

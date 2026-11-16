@@ -31,6 +31,7 @@ import com.fa26se088.filmlink.mapper.lab.FilmLabMapper;
 import com.fa26se088.filmlink.repository.lab.FilmLabImageRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabOpeningHourRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabRepository;
+import com.fa26se088.filmlink.repository.lab.ServicePackageRepository;
 import com.fa26se088.filmlink.service.account.event.LabRegistrationApprovedEvent;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
@@ -69,6 +70,7 @@ class FilmLabServiceImplTest {
   @Mock private FilmLabRepository filmLabRepository;
   @Mock private FilmLabOpeningHourRepository filmLabOpeningHourRepository;
   @Mock private FilmLabImageRepository filmLabImageRepository;
+  @Mock private ServicePackageRepository servicePackageRepository;
   @Mock private LabAccessService labAccessService;
   @Mock private MachineReadiness machineReadiness;
   @Mock private StorageClient storageClient;
@@ -84,6 +86,7 @@ class FilmLabServiceImplTest {
             filmLabRepository,
             filmLabOpeningHourRepository,
             filmLabImageRepository,
+            servicePackageRepository,
             labAccessService,
             machineReadiness,
             storageClient,
@@ -362,18 +365,66 @@ class FilmLabServiceImplTest {
 
   @Test
   void updateMyAcceptingOrders_machinesNotReady_returnsMachinesNotReady() {
-    when(machineReadiness.hasActiveProcessorAndScanner(LAB_ID)).thenReturn(false);
+    givenReadiness(false, true);
 
-    assertError(
-        () -> service.updateMyAcceptingOrders(OWNER_ID, accepting(true)),
-        ErrorCode.LAB_MACHINES_NOT_READY);
+    assertThatThrownBy(() -> service.updateMyAcceptingOrders(OWNER_ID, accepting(true)))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> {
+              assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.LAB_MACHINES_NOT_READY);
+              assertThat(ex.getMessage()).contains("PROCESSOR").doesNotContain("ON_SALE");
+              assertThat(ex.getProperties()).containsEntry("missing", List.of("MACHINES"));
+            });
+    assertThat(lab.isAcceptingOrders()).isFalse();
+    verify(auditLogService, never()).recordSuccess(any());
+  }
+
+  /** BR-34: đủ máy nhưng chưa có gói ON_SALE thì cũng không bật được nhận đơn. */
+  @Test
+  void updateMyAcceptingOrders_noPackageOnSale_returnsMachinesNotReady() {
+    givenReadiness(true, false);
+
+    assertThatThrownBy(() -> service.updateMyAcceptingOrders(OWNER_ID, accepting(true)))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> {
+              assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.LAB_MACHINES_NOT_READY);
+              assertThat(ex.getMessage()).contains("ON_SALE").doesNotContain("PROCESSOR");
+              assertThat(ex.getProperties()).containsEntry("missing", List.of("ON_SALE_PACKAGE"));
+            });
     assertThat(lab.isAcceptingOrders()).isFalse();
     verify(auditLogService, never()).recordSuccess(any());
   }
 
   @Test
+  void updateMyAcceptingOrders_bothMissing_messageNamesBoth() {
+    givenReadiness(false, false);
+
+    assertThatThrownBy(() -> service.updateMyAcceptingOrders(OWNER_ID, accepting(true)))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> {
+              assertThat(ex.getMessage()).contains("PROCESSOR").contains("ON_SALE");
+              assertThat(ex.getProperties())
+                  .containsEntry("missing", List.of("MACHINES", "ON_SALE_PACKAGE"));
+            });
+  }
+
+  @Test
+  void isReadyToAcceptOrders_requiresBothConditions() {
+    givenReadiness(true, true);
+    assertThat(service.isReadyToAcceptOrders(LAB_ID)).isTrue();
+
+    givenReadiness(true, false);
+    assertThat(service.isReadyToAcceptOrders(LAB_ID)).isFalse();
+
+    givenReadiness(false, true);
+    assertThat(service.isReadyToAcceptOrders(LAB_ID)).isFalse();
+  }
+
+  @Test
   void updateMyAcceptingOrders_machinesReady_turnsOnAndAudits() {
-    when(machineReadiness.hasActiveProcessorAndScanner(LAB_ID)).thenReturn(true);
+    givenReadiness(true, true);
 
     var response = service.updateMyAcceptingOrders(OWNER_ID, accepting(true));
 
@@ -395,6 +446,7 @@ class FilmLabServiceImplTest {
 
     assertThat(response.acceptingOrders()).isFalse();
     verify(machineReadiness, never()).hasActiveProcessorAndScanner(any());
+    verify(servicePackageRepository, never()).existsDisplayablePackageOnSale(any());
     verify(auditLogService).recordSuccess(any());
   }
 
@@ -406,6 +458,12 @@ class FilmLabServiceImplTest {
   }
 
   // --- helpers ---
+
+  private void givenReadiness(boolean machinesReady, boolean hasPackageOnSale) {
+    when(machineReadiness.hasActiveProcessorAndScanner(LAB_ID)).thenReturn(machinesReady);
+    when(servicePackageRepository.existsDisplayablePackageOnSale(LAB_ID))
+        .thenReturn(hasPackageOnSale);
+  }
 
   private void assertOpeningHoursRejected(List<FilmLabOpeningHourRequest> week) {
     assertError(

@@ -36,4 +36,12 @@ public interface FilmLabService {
   /** Bật/tắt nhận đơn (BR-57). */
   FilmLabProfileResponse updateMyAcceptingOrders(
       Long ownerAccountId, UpdateFilmLabAcceptingOrdersRequest request);
+
+  /**
+   * BR-57, BR-34: lab đủ điều kiện nhận đơn, tức có máy PROCESSOR và SCANNER đang ACTIVE ({@link
+   * MachineReadiness}) <b>và</b> ít nhất một gói {@code ON_SALE} có Service Type, Film Process,
+   * Film Format đều còn ACTIVE (BR-16). Không xét cờ {@code is_accepting_orders}. Chỗ dùng chung
+   * cho cổng bật nhận đơn và cho việc lọc lab công khai.
+   */
+  boolean isReadyToAcceptOrders(Long filmLabId);
 }
