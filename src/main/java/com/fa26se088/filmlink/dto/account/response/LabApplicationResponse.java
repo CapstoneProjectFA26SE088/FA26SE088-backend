@@ -22,6 +22,10 @@ import java.util.Set;
  * @param contactPhone số điện thoại liên hệ
  * @param status trạng thái xử lý đơn (PENDING_REVIEW, AWAITING_INFORMATION, APPROVED, REJECTED)
  * @param isDuplicateSuspected cảnh báo nghi vấn trùng mã số thuế hoặc địa chỉ (UH-02)
+ * @param rejectionReason lý do từ chối đơn (nếu status = REJECTED)
+ * @param reviewedByAccountId ID tài khoản Admin xét duyệt
+ * @param reviewedAt thời điểm xét duyệt
+ * @param version phiên bản bản ghi phục vụ Optimistic Locking (UC08)
  * @param serviceTypeIds danh sách ID loại dịch vụ
  * @param filmProcessIds danh sách ID quy trình tráng
  * @param filmFormatIds danh sách ID khổ phim
@@ -42,6 +46,10 @@ public record LabApplicationResponse(
     String contactPhone,
     LabApplicationStatus status,
     boolean isDuplicateSuspected,
+    String rejectionReason,
+    Long reviewedByAccountId,
+    Instant reviewedAt,
+    Integer version,
     Set<Long> serviceTypeIds,
     Set<Long> filmProcessIds,
     Set<Long> filmFormatIds,

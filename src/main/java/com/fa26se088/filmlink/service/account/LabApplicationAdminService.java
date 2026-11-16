@@ -1,5 +1,6 @@
 package com.fa26se088.filmlink.service.account;
 
+import com.fa26se088.filmlink.dto.account.request.ApproveLabApplicationRequest;
 import com.fa26se088.filmlink.dto.account.response.AdminLabApplicationSummaryResponse;
 import com.fa26se088.filmlink.dto.account.response.LabApplicationResponse;
 import com.fa26se088.filmlink.dto.common.PageResponse;
@@ -28,4 +29,16 @@ public interface LabApplicationAdminService {
    * @return thông tin chi tiết đơn đăng ký kèm link tải tài liệu pháp lý
    */
   LabApplicationResponse getApplicationDetail(Long id);
+
+  /**
+   * Duyệt đơn đăng ký mở Film Lab: tạo tài khoản FILM_LAB_OWNER, phát sự kiện tạo FilmLab, ghi
+   * audit log và gửi email mật khẩu tạm sau khi commit (UC08, BR-03).
+   *
+   * @param id ID của đơn đăng ký
+   * @param request thông tin version và email chủ lab (tuỳ chọn)
+   * @param adminAccountId ID tài khoản Admin thực hiện xét duyệt
+   * @return thông tin đơn đăng ký sau khi chuyển sang APPROVED
+   */
+  LabApplicationResponse approveApplication(
+      Long id, ApproveLabApplicationRequest request, Long adminAccountId);
 }

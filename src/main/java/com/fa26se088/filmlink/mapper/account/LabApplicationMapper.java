@@ -41,6 +41,10 @@ public class LabApplicationMapper {
         application.getContactPhone(),
         application.getStatus(),
         application.isDuplicateSuspected(),
+        application.getRejectionReason(),
+        application.getReviewedByAccountId(),
+        application.getReviewedAt(),
+        application.getVersion(),
         application.getServiceTypes().stream()
             .map(BaseEntity::getId)
             .collect(Collectors.toSet()),
