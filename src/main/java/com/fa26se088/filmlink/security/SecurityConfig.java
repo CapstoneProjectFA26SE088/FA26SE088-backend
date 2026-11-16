@@ -46,8 +46,8 @@ public class SecurityConfig {
   };
 
   /**
-   * Link tải file ký HMAC của storage local (NFR-PRI-02) và danh mục master data công khai (MD-01,
-   * BR-16).
+   * Link tải file ký HMAC của storage local (NFR-PRI-02), danh mục master data công khai (MD-01,
+   * BR-16), tìm lab và trang lab công khai (UC05, UC17).
    */
   private static final String[] PUBLIC_GET_PATHS = {
     "/api/v1/files",
@@ -55,7 +55,9 @@ public class SecurityConfig {
     "/api/v1/film-formats",
     "/api/v1/service-types",
     "/api/v1/film-stocks",
-    "/api/v1/public/lab-applications/**"
+    "/api/v1/public/lab-applications/**",
+    "/api/v1/public/film-labs",
+    "/api/v1/public/film-labs/*"
   };
 
   private static final String[] SWAGGER_PATHS = {

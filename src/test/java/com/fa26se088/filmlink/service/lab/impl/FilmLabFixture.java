@@ -144,6 +144,66 @@ public class FilmLabFixture {
         status);
   }
 
+  /**
+   * Gói dịch vụ chèn thẳng bằng SQL (không qua API của FA26-68), không push/pull, 5 ngày; trả id.
+   * Master data theo {@code code} seed sẵn.
+   */
+  public long insertPackage(
+      long labId,
+      String name,
+      String serviceTypeCode,
+      String filmProcessCode,
+      String filmFormatCode,
+      long priceVnd,
+      String status) {
+    return jdbcTemplate.queryForObject(
+        """
+        INSERT INTO service_packages
+            (film_lab_id, package_name, service_type_id, film_process_id, film_format_id,
+             price_vnd, turnaround_days, status)
+        VALUES (?, ?, ?, ?, ?, ?, 5, ?)
+        RETURNING id
+        """,
+        Long.class,
+        labId,
+        name,
+        catalogId("service_types", serviceTypeCode),
+        catalogId("film_processes", filmProcessCode),
+        catalogId("film_formats", filmFormatCode),
+        priceVnd,
+        status);
+  }
+
+  public void insertScanOption(long packageId, String label, long priceVnd) {
+    jdbcTemplate.update(
+        "INSERT INTO service_package_scan_options (service_package_id, resolution_label, price_vnd)"
+            + " VALUES (?, ?, ?)",
+        packageId,
+        label,
+        priceVnd);
+  }
+
+  public void setCoordinates(long labId, String latitude, String longitude) {
+    jdbcTemplate.update(
+        "UPDATE film_labs SET latitude = CAST(? AS numeric), longitude = CAST(? AS numeric)"
+            + " WHERE id = ?",
+        latitude,
+        longitude,
+        labId);
+  }
+
+  /** Bật cờ nhận đơn thẳng bằng SQL, bỏ qua cổng BR-57 (dùng để dựng dữ liệu cho tìm kiếm). */
+  public void setAcceptingOrders(long labId, boolean accepting) {
+    jdbcTemplate.update(
+        "UPDATE film_labs SET is_accepting_orders = ? WHERE id = ?", accepting, labId);
+  }
+
+  /** Lab đủ máy theo BR-57: một PROCESSOR và một SCANNER đang ACTIVE. */
+  public void insertReadyMachines(long labId) {
+    insertMachine(labId, "PROCESSOR", "ACTIVE");
+    insertMachine(labId, "SCANNER", "ACTIVE");
+  }
+
   /** Id master data seed sẵn theo {@code code} ({@code service_types}, {@code film_processes}, ...). */
   public long catalogId(String table, String code) {
     return jdbcTemplate.queryForObject(

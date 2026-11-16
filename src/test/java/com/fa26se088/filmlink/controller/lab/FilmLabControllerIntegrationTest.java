@@ -21,6 +21,7 @@ import com.jayway.jsonpath.JsonPath;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -264,23 +265,70 @@ class FilmLabControllerIntegrationTest {
         .andExpect(jsonPath("$.images", hasSize(1)));
   }
 
-  // --- Nhận đơn (BR-57) ---
+  // --- Nhận đơn (BR-57, BR-34) ---
+
+  /**
+   * TC-F04-01 (Report 5): lab đã duyệt, có 1 PROCESSOR + 1 SCANNER ACTIVE và 1 gói ON_SALE. Sửa hồ
+   * sơ, giờ mở cửa 7 ngày, upload ảnh, bật nhận đơn → 200, cờ trong DB bật, audit có before/after.
+   * Máy dựng bằng SQL trong fixture và kiểm bằng {@code SqlMachineReadiness} thật (không mock).
+   */
+  @Test
+  @DisplayName("TC-F04-01 Lab owner completes profile and turns on accepting orders")
+  void tcF0401_completeProfileAndTurnOnAcceptingOrders() throws Exception {
+    fixture.insertReadyMachines(labId);
+    fixture.insertPackage(labId, "C-41 35mm", "DEVELOPING", "C41", "135", 60_000, "ON_SALE");
+
+    mockMvc
+        .perform(
+            put(PATH)
+                .header(HttpHeaders.AUTHORIZATION, bearer(owner))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(profileJson("10.776889", "106.700806")))
+        .andExpect(status().isOk());
+    mockMvc
+        .perform(openingHours("08:00", "18:00"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.openingHours", hasSize(7)));
+    uploadImage(owner, 1);
+
+    mockMvc
+        .perform(acceptingOrders(true))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.acceptingOrders").value(true));
+
+    Boolean accepting =
+        jdbcTemplate.queryForObject(
+            "SELECT is_accepting_orders FROM film_labs WHERE id = ?", Boolean.class, labId);
+    assertThat(accepting).isTrue();
+    var audit =
+        jdbcTemplate.queryForMap(
+            "SELECT before_data ->> 'acceptingOrders' AS before_value,"
+                + " after_data ->> 'acceptingOrders' AS after_value FROM audit_logs"
+                + " WHERE action = 'LAB_ACCEPTING_ORDERS_CHANGED' AND target_type = 'FILM_LAB'"
+                + " AND target_id = ? AND actor_account_id = ?",
+            labId,
+            owner.getId());
+    assertThat(audit).containsEntry("before_value", "false").containsEntry("after_value", "true");
+  }
 
   @Test
-  void acceptingOrders_requiresActiveProcessorAndScanner() throws Exception {
+  void acceptingOrders_requiresActiveMachinesAndPackageOnSale() throws Exception {
     mockMvc
         .perform(acceptingOrders(true))
         .andExpect(status().isUnprocessableContent())
         .andExpect(jsonPath("$.errorCode").value("LAB_MACHINES_NOT_READY"))
-        .andExpect(jsonPath("$.messageCode").value("MSG32"));
+        .andExpect(jsonPath("$.messageCode").value("MSG32"))
+        .andExpect(jsonPath("$.missing", hasSize(2)));
 
     // Máy scan đang bảo trì không được tính.
     fixture.insertMachine(labId, "PROCESSOR", "ACTIVE");
     fixture.insertMachine(labId, "SCANNER", "MAINTENANCE");
+    fixture.insertPackage(labId, "C-41 35mm", "DEVELOPING", "C41", "135", 60_000, "ON_SALE");
     mockMvc
         .perform(acceptingOrders(true))
         .andExpect(status().isUnprocessableContent())
-        .andExpect(jsonPath("$.errorCode").value("LAB_MACHINES_NOT_READY"));
+        .andExpect(jsonPath("$.errorCode").value("LAB_MACHINES_NOT_READY"))
+        .andExpect(jsonPath("$.missing[0]").value("MACHINES"));
 
     fixture.insertMachine(labId, "SCANNER", "ACTIVE");
     mockMvc
@@ -301,6 +349,37 @@ class FilmLabControllerIntegrationTest {
             labId,
             owner.getId());
     assertThat(auditRows).isEqualTo(2);
+  }
+
+  /**
+   * BR-16, BR-34: đủ máy, gói ON_SALE duy nhất dùng Film Process đã DISCONTINUED ({@code
+   * BW_REVERSAL}, seed sẵn) thì không tính là gói đang bán, không bật được nhận đơn.
+   */
+  @Test
+  void acceptingOrders_onlyPackageWithDiscontinuedMasterdata_returns422() throws Exception {
+    fixture.insertReadyMachines(labId);
+    fixture.insertPackage(labId, "BW đảo 135", "DEVELOPING", "BW_REVERSAL", "135", 60_000, "ON_SALE");
+
+    mockMvc
+        .perform(acceptingOrders(true))
+        .andExpect(status().isUnprocessableContent())
+        .andExpect(jsonPath("$.errorCode").value("LAB_MACHINES_NOT_READY"))
+        .andExpect(jsonPath("$.missing", hasSize(1)))
+        .andExpect(jsonPath("$.missing[0]").value("ON_SALE_PACKAGE"));
+  }
+
+  /** BR-34: đủ máy nhưng gói duy nhất đã WITHDRAWN thì không bật được nhận đơn. */
+  @Test
+  void acceptingOrders_onlyWithdrawnPackage_returns422() throws Exception {
+    fixture.insertReadyMachines(labId);
+    fixture.insertPackage(labId, "C-41 35mm", "DEVELOPING", "C41", "135", 60_000, "WITHDRAWN");
+
+    mockMvc
+        .perform(acceptingOrders(true))
+        .andExpect(status().isUnprocessableContent())
+        .andExpect(jsonPath("$.errorCode").value("LAB_MACHINES_NOT_READY"))
+        .andExpect(jsonPath("$.missing", hasSize(1)))
+        .andExpect(jsonPath("$.missing[0]").value("ON_SALE_PACKAGE"));
   }
 
   // --- helpers ---

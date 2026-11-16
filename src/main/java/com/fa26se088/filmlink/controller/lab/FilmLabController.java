@@ -82,7 +82,10 @@ public class FilmLabController {
   }
 
   @PatchMapping("/accepting-orders")
-  @Operation(summary = "Bật/tắt nhận đơn; bật cần ít nhất 1 PROCESSOR và 1 SCANNER ACTIVE (BR-57)")
+  @Operation(
+      summary =
+          "Bật/tắt nhận đơn; bật cần ít nhất 1 PROCESSOR, 1 SCANNER ACTIVE (BR-57) và 1 gói"
+              + " ON_SALE (BR-34)")
   public FilmLabProfileResponse updateMyAcceptingOrders(
       @AuthenticationPrincipal AuthenticatedAccount account,
       @Valid @RequestBody UpdateFilmLabAcceptingOrdersRequest request) {
