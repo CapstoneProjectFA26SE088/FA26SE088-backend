@@ -144,6 +144,12 @@ public class FilmLabFixture {
         status);
   }
 
+  /** Id master data seed sẵn theo {@code code} ({@code service_types}, {@code film_processes}, ...). */
+  public long catalogId(String table, String code) {
+    return jdbcTemplate.queryForObject(
+        "SELECT id FROM " + table + " WHERE code = ?", Long.class, code);
+  }
+
   public void cleanUp() {
     for (Long applicationId : applicationIds) {
       Long labId = labIdOfApplication(applicationId);
@@ -153,6 +159,8 @@ public class FilmLabFixture {
                 "SELECT blob_key FROM film_lab_images WHERE film_lab_id = ?", String.class, labId)
             .forEach(storageClient::delete);
         jdbcTemplate.update("DELETE FROM machines WHERE film_lab_id = ?", labId);
+        // service_package_scan_options: ON DELETE CASCADE theo service_packages.
+        jdbcTemplate.update("DELETE FROM service_packages WHERE film_lab_id = ?", labId);
         // film_lab_opening_hours, film_lab_images: ON DELETE CASCADE.
         jdbcTemplate.update("DELETE FROM film_labs WHERE id = ?", labId);
       }

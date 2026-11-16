@@ -19,5 +19,7 @@ public enum AuditTargetType {
   SYSTEM_PARAMETER,
 
   // --- lab ---
-  FILM_LAB
+  FILM_LAB,
+  /** UC13: gói dịch vụ trong bảng giá của lab. */
+  SERVICE_PACKAGE
 }

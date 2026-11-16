@@ -51,6 +51,12 @@ public enum ErrorCode {
   LAB_IMAGE_NOT_FOUND(HttpStatus.NOT_FOUND, null),
   /** BR-57: chưa có máy PROCESSOR và máy SCANNER đang ACTIVE thì không được bật nhận đơn. */
   LAB_MACHINES_NOT_READY(HttpStatus.UNPROCESSABLE_CONTENT, "MSG32"),
+  /** Gói không tồn tại hoặc thuộc lab khác (không lộ id gói của lab khác). */
+  LAB_PACKAGE_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  /** UC13: tên gói trùng một gói khác của cùng lab (không phân biệt hoa thường). */
+  LAB_PACKAGE_NAME_DUPLICATE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** BR-16: Service Type / Film Process / Film Format không tồn tại hoặc không còn ACTIVE. */
+  LAB_PACKAGE_MASTERDATA_INACTIVE(HttpStatus.UNPROCESSABLE_CONTENT, null),
 
   // --- payment ---
   PAYMENT_GATEWAY_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, null),

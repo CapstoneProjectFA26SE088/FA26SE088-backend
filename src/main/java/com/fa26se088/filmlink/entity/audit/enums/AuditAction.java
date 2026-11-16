@@ -31,5 +31,11 @@ public enum AuditAction {
 
   // --- lab ---
   /** UC12: Film Lab Owner bật/tắt nhận đơn; before/after ghi {@code acceptingOrders}. */
-  LAB_ACCEPTING_ORDERS_CHANGED
+  LAB_ACCEPTING_ORDERS_CHANGED,
+
+  /** UC13: Film Lab Owner tạo Service Package; after ghi tên, giá, trạng thái. */
+  LAB_SERVICE_PACKAGE_CREATED,
+
+  /** UC13: Film Lab Owner mở bán / ngừng bán Service Package; before/after ghi {@code status}. */
+  LAB_SERVICE_PACKAGE_STATUS_CHANGED
 }
