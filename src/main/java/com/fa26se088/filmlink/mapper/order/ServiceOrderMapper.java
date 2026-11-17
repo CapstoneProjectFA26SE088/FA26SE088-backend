@@ -5,8 +5,10 @@ import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.OrderPhotographerResponse;
+import com.fa26se088.filmlink.dto.order.response.ProcessingStageRecordResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderResponse;
 import com.fa26se088.filmlink.entity.order.FilmRoll;
+import com.fa26se088.filmlink.entity.order.ProcessingStageRecord;
 import com.fa26se088.filmlink.entity.order.ServiceOrder;
 import java.util.List;
 import org.springframework.stereotype.Component;
@@ -44,14 +46,15 @@ public class ServiceOrderMapper {
   }
 
   /**
-   * UC22, UC23: chi tiết đơn cho chủ lab; {@code photographer} do service đọc qua domain account,
-   * {@code handovers} đọc qua domain delivery.
+   * UC22, UC23, UC69: chi tiết đơn cho chủ lab; {@code photographer} do service đọc qua domain
+   * account, {@code handovers} đọc qua domain delivery, {@code stages} theo thứ tự thời gian.
    */
   public LabServiceOrderResponse toLabResponse(
       ServiceOrder order,
       List<FilmRoll> rolls,
       OrderPhotographerResponse photographer,
-      List<FilmHandoverResponse> handovers) {
+      List<FilmHandoverResponse> handovers,
+      List<ProcessingStageRecord> stages) {
     return new LabServiceOrderResponse(
         order.getId(),
         order.getOrderCode(),
@@ -70,11 +73,14 @@ public class ServiceOrderMapper {
         order.getFinalTotalVnd(),
         order.getPriceLockedAt(),
         order.getExpectedReturnAt(),
+        order.getPromisedReturnAt(),
+        order.getMachineAssignmentConfirmedAt(),
         order.getLabResponseDueAt(),
         order.getAcceptedAt(),
         photographer,
         rolls.stream().map(this::toRollResponse).toList(),
         handovers,
+        stages.stream().map(this::toStageResponse).toList(),
         order.getCreatedAt());
   }
 
@@ -92,6 +98,12 @@ public class ServiceOrderMapper {
         order.getLabResponseDueAt(),
         order.getExpectedReturnAt(),
         order.getCreatedAt());
+  }
+
+  /** BR-07: một mốc công đoạn. */
+  public ProcessingStageRecordResponse toStageResponse(ProcessingStageRecord record) {
+    return new ProcessingStageRecordResponse(
+        record.getStage(), record.getRecordedAt(), record.getNote());
   }
 
   public FilmRollResponse toRollResponse(FilmRoll roll) {

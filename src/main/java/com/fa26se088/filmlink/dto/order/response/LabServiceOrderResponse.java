@@ -14,7 +14,10 @@ import java.util.List;
  * giờ lấy phim chỉ có giá trị khi {@code filmHandoverMethod = PICKUP}. {@code finalTotalVnd} và
  * {@code priceLockedAt} có giá trị sau khi lab xác nhận nhận phim (UC23).
  *
- * <p>Chưa có shipment, timeline công đoạn, thanh toán (task sau).
+ * <p>{@code promisedReturnAt}, {@code machineAssignmentConfirmedAt} có giá trị sau khi lab xác
+ * nhận ngày hẹn trả (UC69); {@code stages} là timeline công đoạn (BR-07), cũ nhất trước.
+ *
+ * <p>Chưa có shipment, thanh toán (task sau).
  */
 public record LabServiceOrderResponse(
     Long id,
@@ -34,9 +37,12 @@ public record LabServiceOrderResponse(
     Long finalTotalVnd,
     Instant priceLockedAt,
     Instant expectedReturnAt,
+    Instant promisedReturnAt,
+    Instant machineAssignmentConfirmedAt,
     Instant labResponseDueAt,
     Instant acceptedAt,
     OrderPhotographerResponse photographer,
     List<FilmRollResponse> rolls,
     List<FilmHandoverResponse> handovers,
+    List<ProcessingStageRecordResponse> stages,
     Instant createdAt) {}

@@ -34,6 +34,9 @@ public interface ServiceOrderRepository extends JpaRepository<ServiceOrder, Long
   Optional<ServiceOrder> findByIdAndFilmLabIdForUpdate(
       @Param("id") Long id, @Param("filmLabId") Long filmLabId);
 
+  /** UC72: đơn {@code id} chỉ khi thuộc Photographer {@code photographerAccountId}. */
+  Optional<ServiceOrder> findByIdAndPhotographerAccountId(Long id, Long photographerAccountId);
+
   /** UC22: đơn của lab, mọi trạng thái. */
   Page<ServiceOrder> findByFilmLabId(Long filmLabId, Pageable pageable);
 

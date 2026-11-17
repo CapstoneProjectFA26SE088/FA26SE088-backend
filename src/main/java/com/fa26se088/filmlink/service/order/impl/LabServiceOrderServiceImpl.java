@@ -7,36 +7,47 @@ import com.fa26se088.filmlink.dto.account.response.UserAccountResponse;
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.delivery.request.RecordFilmHandoverRequest;
+import com.fa26se088.filmlink.dto.machine.CapacityProposal;
+import com.fa26se088.filmlink.dto.machine.CapacityRequest;
+import com.fa26se088.filmlink.dto.machine.RollGroup;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
+import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.OrderPhotographerResponse;
+import com.fa26se088.filmlink.dto.order.response.ScheduleAllocationResponse;
+import com.fa26se088.filmlink.dto.order.response.ScheduleProposalResponse;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.delivery.enums.HandoverPoint;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
 import com.fa26se088.filmlink.entity.notification.enums.NotificationType;
 import com.fa26se088.filmlink.entity.order.FilmRoll;
+import com.fa26se088.filmlink.entity.order.ProcessingStageRecord;
 import com.fa26se088.filmlink.entity.order.ServiceOrder;
 import com.fa26se088.filmlink.entity.order.enums.FilmHandoverMethod;
 import com.fa26se088.filmlink.entity.order.enums.FilmRollStatus;
 import com.fa26se088.filmlink.entity.order.enums.PaymentMethod;
+import com.fa26se088.filmlink.entity.order.enums.ProcessingStage;
 import com.fa26se088.filmlink.entity.order.enums.ServiceOrderStatus;
 import com.fa26se088.filmlink.exception.BusinessException;
 import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.mapper.order.ServiceOrderMapper;
 import com.fa26se088.filmlink.repository.order.FilmRollRepository;
 import com.fa26se088.filmlink.repository.order.FilmRollRepository.RollCountRow;
+import com.fa26se088.filmlink.repository.order.ProcessingStageRecordRepository;
 import com.fa26se088.filmlink.repository.order.ServiceOrderRepository;
 import com.fa26se088.filmlink.service.account.UserAccountService;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.delivery.FilmHandoverService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
+import com.fa26se088.filmlink.service.machine.CapacitySchedulingService;
 import com.fa26se088.filmlink.service.notification.event.NotificationEvent;
 import com.fa26se088.filmlink.service.order.LabServiceOrderService;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -79,6 +90,8 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
   private final ApplicationEventPublisher eventPublisher;
   private final ServiceOrderMapper serviceOrderMapper;
   private final FilmHandoverService filmHandoverService;
+  private final ProcessingStageRecordRepository processingStageRecordRepository;
+  private final CapacitySchedulingService capacitySchedulingService;
   private final Clock clock;
 
   /**
@@ -183,6 +196,206 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
             Map.of("status", order.getStatus().name())));
     notifyPhotographerAccepted(lab, order);
     return toLabResponse(order);
+  }
+
+  /**
+   * UC69, BR-58–BR-61: ngày hẹn trả đề xuất. Chỉ đọc, không ghi DB.
+   *
+   * <ul>
+   *   <li>CR-14: đơn của lab khác → 404 {@code ORDER_NOT_FOUND}.
+   *   <li>Chỉ đơn {@code AWAITING_MACHINE_ASSIGNMENT}; khác → 409 {@code ORDER_STATUS_CONFLICT}.
+   *   <li>Thuật toán công suất thuộc domain machine ({@link CapacitySchedulingService#propose});
+   *       order chỉ dựng {@link CapacityRequest} (xem {@link #capacityRequest}).
+   * </ul>
+   */
+  @Override
+  @Transactional(readOnly = true)
+  public ScheduleProposalResponse getScheduleProposal(Long ownerAccountId, Long orderId) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndFilmLabId(orderId, lab.getId())
+            .orElseThrow(LabServiceOrderServiceImpl::orderNotFound);
+    requireAwaitingMachineAssignment(order);
+    return toProposalResponse(capacitySchedulingService.propose(capacityRequest(order)));
+  }
+
+  /**
+   * UC69: Film Lab Owner xác nhận ngày hẹn trả.
+   *
+   * <ul>
+   *   <li>CR-14: đơn của lab khác → 404. Đọc đơn bằng {@code SELECT ... FOR UPDATE} rồi mới kiểm
+   *       trạng thái: chỉ {@code AWAITING_MACHINE_ASSIGNMENT}, khác (kể cả xác nhận lần hai) → 409.
+   *   <li>Gọi lại {@code propose} (công suất có thể đã đổi từ lúc lab xem đề xuất). UH-51: không
+   *       khả thi → 422 {@code ORDER_SCHEDULE_INFEASIBLE} (huỷ + hoàn tiền 100% là Later).
+   *   <li>BR-60: ngày lab chọn sớm hơn ngày đề xuất → 422 {@code ORDER_PROMISED_DATE_TOO_EARLY};
+   *       không gửi ngày = dùng ngày đề xuất.
+   *   <li>BR-59: {@code confirm} ghi phân bổ công suất (domain machine); {@code promised_return_at}
+   *       lấy theo giá trị {@code confirm} trả về, {@code machine_assignment_confirmed_at = now}
+   *       ({@code ck_service_orders_promised}), trạng thái → {@code IN_PROCESSING}.
+   *   <li>BR-07: ghi công đoạn đầu tiên {@code RECEIVED}, người ghi là chủ lab.
+   *   <li>UC04: báo Photographer ngày hẹn trả (giờ Việt Nam, CR-04). BR-32: audit {@code
+   *       ORDER_SCHEDULE_CONFIRMED}.
+   * </ul>
+   */
+  @Override
+  @Transactional
+  public LabServiceOrderResponse confirmSchedule(
+      Long ownerAccountId, Long orderId, ConfirmScheduleRequest request) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndFilmLabIdForUpdate(orderId, lab.getId())
+            .orElseThrow(LabServiceOrderServiceImpl::orderNotFound);
+    final ServiceOrderStatus before = requireAwaitingMachineAssignment(order);
+
+    CapacityRequest capacityRequest = capacityRequest(order);
+    CapacityProposal proposal = capacitySchedulingService.propose(capacityRequest);
+    if (!proposal.feasible()) {
+      throw new BusinessException(
+          ErrorCode.ORDER_SCHEDULE_INFEASIBLE,
+          "Lab chưa xếp được lịch xử lý cho đơn "
+              + order.getOrderCode()
+              + (proposal.infeasibleReason() == null ? "." : ": " + proposal.infeasibleReason())
+              + " Huỷ đơn và hoàn tiền sẽ có ở giai đoạn sau.");
+    }
+    Instant requested = request == null ? null : request.promisedReturnAt();
+    Instant chosen = requested == null ? proposal.promisedReturnAt() : requested;
+    if (chosen.isBefore(proposal.promisedReturnAt())) {
+      throw new BusinessException(
+          ErrorCode.ORDER_PROMISED_DATE_TOO_EARLY,
+          "Ngày hẹn trả không được sớm hơn ngày đề xuất "
+              + NOTIFICATION_TIME.format(proposal.promisedReturnAt().atZone(VIETNAM_ZONE))
+              + ".",
+          Map.of(
+              "field",
+              "promisedReturnAt",
+              "proposedPromisedReturnAt",
+              proposal.promisedReturnAt().toString()));
+    }
+
+    CapacityProposal confirmed = capacitySchedulingService.confirm(capacityRequest, chosen);
+    Instant now = clock.instant();
+    order.setPromisedReturnAt(confirmed.promisedReturnAt());
+    order.setMachineAssignmentConfirmedAt(now);
+    order.setStatus(ServiceOrderStatus.IN_PROCESSING);
+    try {
+      order = serviceOrderRepository.saveAndFlush(order);
+    } catch (OptimisticLockingFailureException ex) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
+    }
+
+    ProcessingStageRecord received = new ProcessingStageRecord();
+    received.setServiceOrderId(order.getId());
+    received.setStage(ProcessingStage.RECEIVED);
+    received.setRecordedByAccountId(ownerAccountId);
+    received.setRecordedAt(now);
+    processingStageRecordRepository.save(received);
+
+    Map<String, Object> auditBefore = new LinkedHashMap<>();
+    auditBefore.put("status", before.name());
+    auditBefore.put("promisedReturnAt", null);
+    Map<String, Object> auditAfter = new LinkedHashMap<>();
+    auditAfter.put("status", order.getStatus().name());
+    auditAfter.put("promisedReturnAt", order.getPromisedReturnAt().toString());
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ORDER_SCHEDULE_CONFIRMED,
+            AuditTargetType.SERVICE_ORDER,
+            order.getId(),
+            null,
+            auditBefore,
+            auditAfter));
+    notifyPhotographerScheduleConfirmed(lab, order);
+    return toLabResponse(order);
+  }
+
+  /** UC69: chỉ đơn đang chờ xếp máy; trả trạng thái hiện tại để ghi audit. */
+  private static ServiceOrderStatus requireAwaitingMachineAssignment(ServiceOrder order) {
+    ServiceOrderStatus status = order.getStatus();
+    if (status != ServiceOrderStatus.AWAITING_MACHINE_ASSIGNMENT) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Chỉ xếp lịch được với đơn đang chờ xếp máy; đơn "
+              + order.getOrderCode()
+              + " đang ở trạng thái "
+              + status.name()
+              + ".");
+    }
+    return status;
+  }
+
+  /**
+   * BR-58: dựng yêu cầu xếp lịch từ các cuộn {@code RECEIVED} của đơn, gom theo (quy trình, khổ
+   * phim) theo thứ tự cuộn. {@code framesPerRoll} = trung bình {@code exposure_count} của nhóm, làm
+   * tròn lên. {@code receivedAt} = thời điểm chốt giá khi nhận phim (UC23).
+   */
+  private CapacityRequest capacityRequest(ServiceOrder order) {
+    Map<List<Long>, List<FilmRoll>> byGroup = new LinkedHashMap<>();
+    for (FilmRoll roll :
+        filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId())) {
+      if (roll.getStatus() == FilmRollStatus.RECEIVED) {
+        byGroup
+            .computeIfAbsent(
+                List.of(roll.getFilmProcessId(), roll.getFilmFormatId()), key -> new ArrayList<>())
+            .add(roll);
+      }
+    }
+    List<RollGroup> groups =
+        byGroup.entrySet().stream()
+            .map(
+                entry -> {
+                  List<FilmRoll> rolls = entry.getValue();
+                  int frames = rolls.stream().mapToInt(FilmRoll::getExposureCount).sum();
+                  return new RollGroup(
+                      entry.getKey().get(0),
+                      entry.getKey().get(1),
+                      rolls.size(),
+                      Math.ceilDiv(frames, rolls.size()));
+                })
+            .toList();
+    return new CapacityRequest(
+        order.getId(),
+        order.getFilmLabId(),
+        order.getServiceTier(),
+        order.getPriceLockedAt(),
+        groups);
+  }
+
+  private static ScheduleProposalResponse toProposalResponse(CapacityProposal proposal) {
+    return new ScheduleProposalResponse(
+        proposal.feasible(),
+        proposal.infeasibleReason(),
+        proposal.promisedReturnAt(),
+        proposal.tierCommitmentAt(),
+        proposal.allocations().stream()
+            .map(
+                allocation ->
+                    new ScheduleAllocationResponse(
+                        allocation.workDate(),
+                        allocation.filmProcessId(),
+                        allocation.filmFormatId(),
+                        allocation.rollCount()))
+            .toList());
+  }
+
+  /** UC69, UC04: báo Photographer ngày hẹn trả (giờ Việt Nam; gửi sau khi commit). */
+  private void notifyPhotographerScheduleConfirmed(FilmLab lab, ServiceOrder order) {
+    eventPublisher.publishEvent(
+        new NotificationEvent(
+            order.getPhotographerAccountId(),
+            NotificationType.ORDER_STATUS,
+            "Đơn " + order.getOrderCode() + " đã có ngày hẹn trả",
+            "Film Lab "
+                + lab.getLabName()
+                + " đã xếp lịch xử lý đơn "
+                + order.getOrderCode()
+                + ". Ngày hẹn trả: "
+                + NOTIFICATION_TIME.format(order.getPromisedReturnAt().atZone(VIETNAM_ZONE))
+                + ".",
+            null));
   }
 
   /**
@@ -454,7 +667,7 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
    *
    * Bàn giao phim đọc qua {@link FilmHandoverService} (không inject repository của delivery).
    *
-   * <p>TODO: shipment, timeline công đoạn, thanh toán khi các contract tương ứng lên dev.
+   * <p>TODO: shipment, thanh toán khi các contract tương ứng lên dev.
    */
   private LabServiceOrderResponse toLabResponse(ServiceOrder order) {
     UserAccountResponse account =
@@ -463,7 +676,9 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
         order,
         filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId()),
         new OrderPhotographerResponse(account.id(), account.fullName(), account.phoneNumber()),
-        filmHandoverService.getByServiceOrderId(order.getId()));
+        filmHandoverService.getByServiceOrderId(order.getId()),
+        processingStageRecordRepository.findByServiceOrderIdOrderByRecordedAtAscIdAsc(
+            order.getId()));
   }
 
   private static BusinessException orderNotFound() {
