@@ -3,6 +3,7 @@ package com.fa26se088.filmlink.controller.order;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
+import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
@@ -31,8 +32,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * UC22, UC23, UC69: Film Lab Owner xem, nhận Service Order, xác nhận nhận phim và ngày hẹn trả
- * (hàng
+ * UC22, UC23, UC69, UC24: Film Lab Owner xem, nhận Service Order, xác nhận nhận phim, ngày hẹn trả
+ * và ghi công đoạn xử lý (hàng
  * đợi công việc của lab, tiền tố {@code /api/v1/lab/...} theo SPEC-00 §9). Lab luôn là lab của
  * tài khoản đang đăng nhập, không nhận {@code labId} từ client.
  */
@@ -123,5 +124,20 @@ public class LabServiceOrderController {
       @PathVariable Long id,
       @Valid @RequestBody(required = false) ConfirmScheduleRequest request) {
     return labServiceOrderService.confirmSchedule(account.id(), id, request);
+  }
+
+  @PostMapping("/{id}/stages")
+  @Operation(
+      summary = "Ghi công đoạn xử lý kế tiếp của đơn IN_PROCESSING; không đổi trạng thái đơn",
+      description =
+          "UC24, BR-07. Thứ tự RECEIVED → DEVELOPING → WASHING → DRYING → SCANNING → QC; RECEIVED"
+              + " đã ghi lúc xác nhận lịch. Không phải công đoạn kế tiếp (nhảy cóc, lùi, lặp, đã"
+              + " tới QC) → 422 ORDER_STAGE_OUT_OF_ORDER; đơn không IN_PROCESSING → 409"
+              + " ORDER_STATUS_CONFLICT; note > 300 ký tự → 400 VALIDATION_ERROR.")
+  public LabServiceOrderResponse recordStage(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @Valid @RequestBody RecordProcessingStageRequest request) {
+    return labServiceOrderService.recordStage(account.id(), id, request);
   }
 }

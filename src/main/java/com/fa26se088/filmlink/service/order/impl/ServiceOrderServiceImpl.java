@@ -1,6 +1,8 @@
 package com.fa26se088.filmlink.service.order.impl;
 
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
+import com.fa26se088.filmlink.dto.common.PageResponse;
+import com.fa26se088.filmlink.dto.lab.response.FilmLabBriefResponse;
 import com.fa26se088.filmlink.dto.lab.response.OrderingFilmLabResponse;
 import com.fa26se088.filmlink.dto.lab.response.ServicePackageResponse;
 import com.fa26se088.filmlink.dto.lab.response.ServicePackageScanOptionResponse;
@@ -11,6 +13,9 @@ import com.fa26se088.filmlink.dto.masterdata.response.ServiceTypeResponse;
 import com.fa26se088.filmlink.dto.order.request.AnswerScheduleChangeRequest;
 import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollRequest;
+import com.fa26se088.filmlink.dto.order.request.SearchServiceOrderRequest;
+import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
+import com.fa26se088.filmlink.dto.order.response.ServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmRollQuoteResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderCreationResult;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderQuoteResponse;
@@ -32,8 +37,11 @@ import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.exception.GlobalExceptionHandler.FieldViolation;
 import com.fa26se088.filmlink.mapper.order.ServiceOrderMapper;
 import com.fa26se088.filmlink.repository.order.FilmRollRepository;
+import com.fa26se088.filmlink.repository.order.FilmRollRepository.RollCountRow;
+import com.fa26se088.filmlink.repository.order.ProcessingStageRecordRepository;
 import com.fa26se088.filmlink.repository.order.ServiceOrderRepository;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
+import com.fa26se088.filmlink.service.delivery.FilmHandoverService;
 import com.fa26se088.filmlink.service.lab.FilmLabService;
 import com.fa26se088.filmlink.service.machine.ScheduleChangeService;
 import com.fa26se088.filmlink.service.machine.event.PromisedDateChangedEvent;
@@ -60,6 +68,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -93,6 +104,15 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
   private static final Set<ServiceOrderStatus> PROMISED_DATE_FINAL_STATUSES =
       Set.of(ServiceOrderStatus.DELIVERED, ServiceOrderStatus.CLOSED, ServiceOrderStatus.CANCELLED);
 
+  /** CR-01: danh sách đơn của Photographer, 20 dòng mặc định, tối đa 100. */
+  private static final int DEFAULT_PAGE_SIZE = 20;
+
+  private static final int MAX_PAGE_SIZE = 100;
+
+  /** CR-02: mới nhất trước; {@code id} để thứ tự ổn định khi trùng {@code created_at}. */
+  private static final Sort NEWEST_FIRST =
+      Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
+
   private final SecureRandom random = new SecureRandom();
 
   private final ServiceOrderRepository serviceOrderRepository;
@@ -104,6 +124,8 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
   private final ApplicationEventPublisher eventPublisher;
   private final ServiceOrderMapper serviceOrderMapper;
   private final ScheduleChangeService scheduleChangeService;
+  private final ProcessingStageRecordRepository processingStageRecordRepository;
+  private final FilmHandoverService filmHandoverService;
   private final Clock clock;
 
   /**
@@ -494,6 +516,80 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
               + " (huỷ đơn hoặc chuyển lab sẽ có ở giai đoạn sau). Hiện chỉ chọn được Chờ (WAIT).");
     }
     scheduleChangeService.answer(scheduleChangeId, order.getId(), request.choice(), request.note());
+  }
+
+  /**
+   * UC25, CR-01, CR-02, CR-14: chỉ đơn của Photographer; 20 dòng mặc định, tối đa 100; mới nhất
+   * trước. Tên lab ({@link FilmLabService#getLabBriefs}) và số cuộn ({@code
+   * FilmRollRepository#countByServiceOrderIds}) mỗi thứ đọc bằng một query gộp cho cả trang (không
+   * N+1).
+   */
+  @Override
+  @Transactional(readOnly = true)
+  public PageResponse<ServiceOrderSummaryResponse> getMyOrders(
+      Long photographerAccountId, SearchServiceOrderRequest request) {
+    int page = request.page() == null ? 0 : request.page();
+    int size = request.size() == null ? DEFAULT_PAGE_SIZE : Math.min(request.size(), MAX_PAGE_SIZE);
+    PageRequest pageable = PageRequest.of(page, size, NEWEST_FIRST);
+    Page<ServiceOrder> orders =
+        request.status() == null
+            ? serviceOrderRepository.findByPhotographerAccountId(photographerAccountId, pageable)
+            : serviceOrderRepository.findByPhotographerAccountIdAndStatus(
+                photographerAccountId, request.status(), pageable);
+    if (orders.isEmpty()) {
+      return PageResponse.from(orders, order -> serviceOrderMapper.toSummaryResponse(order, null, 0));
+    }
+
+    Map<Long, Long> rollCounts =
+        filmRollRepository
+            .countByServiceOrderIds(orders.map(ServiceOrder::getId).getContent())
+            .stream()
+            .collect(Collectors.toMap(RollCountRow::getServiceOrderId, RollCountRow::getRollCount));
+    Map<Long, String> labNames =
+        filmLabService
+            .getLabBriefs(
+                orders.getContent().stream().map(ServiceOrder::getFilmLabId).distinct().toList())
+            .stream()
+            .collect(Collectors.toMap(FilmLabBriefResponse::id, FilmLabBriefResponse::labName));
+    return PageResponse.from(
+        orders,
+        order ->
+            serviceOrderMapper.toSummaryResponse(
+                order,
+                labNames.get(order.getFilmLabId()),
+                rollCounts.getOrDefault(order.getId(), 0L)));
+  }
+
+  /**
+   * UC25, CR-14: chi tiết đơn của Photographer; đơn không tồn tại hoặc của người khác → 404 {@code
+   * ORDER_NOT_FOUND}. Gồm lab (tên, địa chỉ), cuộn, dòng thời gian công đoạn (BR-07), bàn giao
+   * (BR-25, qua {@link FilmHandoverService}). Không trả dữ liệu nội bộ của lab ({@link
+   * ServiceOrderDetailResponse}).
+   */
+  @Override
+  @Transactional(readOnly = true)
+  public ServiceOrderDetailResponse getMyOrder(Long photographerAccountId, Long orderId) {
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndPhotographerAccountId(orderId, photographerAccountId)
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn dịch vụ."));
+    FilmLabBriefResponse lab =
+        filmLabService.getLabBriefs(List.of(order.getFilmLabId())).stream()
+            .findFirst()
+            .orElse(null);
+    // TODO(FA26-157): thông tin thanh toán của đơn khi contract PaymentService lên dev
+    Object payment = null;
+    return serviceOrderMapper.toDetailResponse(
+        order,
+        lab,
+        filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId()),
+        processingStageRecordRepository.findByServiceOrderIdOrderByRecordedAtAscIdAsc(
+            order.getId()),
+        filmHandoverService.getByServiceOrderId(order.getId()),
+        payment);
   }
 
   /**

@@ -7,6 +7,7 @@ import com.fa26se088.filmlink.dto.lab.request.FilmLabOpeningHourRequest;
 import com.fa26se088.filmlink.dto.lab.request.UpdateFilmLabAcceptingOrdersRequest;
 import com.fa26se088.filmlink.dto.lab.request.UpdateFilmLabOpeningHoursRequest;
 import com.fa26se088.filmlink.dto.lab.request.UpdateFilmLabProfileRequest;
+import com.fa26se088.filmlink.dto.lab.response.FilmLabBriefResponse;
 import com.fa26se088.filmlink.dto.lab.response.FilmLabImageResponse;
 import com.fa26se088.filmlink.dto.lab.response.FilmLabProfileResponse;
 import com.fa26se088.filmlink.dto.lab.response.OrderingFilmLabResponse;
@@ -294,6 +295,24 @@ public class FilmLabServiceImpl implements FilmLabService {
                 () -> new BusinessException(ErrorCode.LAB_NOT_FOUND, "Không tìm thấy Film Lab."));
     return new OrderingFilmLabResponse(
         lab.getId(), lab.getOwnerAccountId(), lab.getLabName(), lab.isAcceptingOrders());
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<FilmLabBriefResponse> getLabBriefs(Collection<Long> filmLabIds) {
+    if (filmLabIds.isEmpty()) {
+      return List.of();
+    }
+    return filmLabRepository.findAllById(filmLabIds).stream()
+        .map(
+            lab ->
+                new FilmLabBriefResponse(
+                    lab.getId(),
+                    lab.getLabName(),
+                    lab.getAddressLine(),
+                    lab.getDistrict(),
+                    lab.getProvince()))
+        .toList();
   }
 
   @Override

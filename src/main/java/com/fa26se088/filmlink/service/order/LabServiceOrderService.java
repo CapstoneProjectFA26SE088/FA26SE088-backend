@@ -3,6 +3,7 @@ package com.fa26se088.filmlink.service.order;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
+import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
@@ -70,4 +71,14 @@ public interface LabServiceOrderService {
    */
   LabServiceOrderResponse confirmSchedule(
       Long ownerAccountId, Long orderId, ConfirmScheduleRequest request);
+
+  /**
+   * UC24, BR-07: lab ghi công đoạn kế tiếp của đơn {@code IN_PROCESSING}. Không đổi trạng thái
+   * đơn.
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404),
+   *     {@code ORDER_STATUS_CONFLICT} (409), {@code ORDER_STAGE_OUT_OF_ORDER} (422)
+   */
+  LabServiceOrderResponse recordStage(
+      Long ownerAccountId, Long orderId, RecordProcessingStageRequest request);
 }

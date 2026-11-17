@@ -98,6 +98,8 @@ public enum ErrorCode {
   ORDER_SCHEDULE_INFEASIBLE(HttpStatus.UNPROCESSABLE_CONTENT, null),
   /** BR-60: ngày hẹn trả lab chọn sớm hơn ngày đề xuất; lab chỉ được dời muộn hơn. */
   ORDER_PROMISED_DATE_TOO_EARLY(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** BR-07, UC24: công đoạn ghi không phải công đoạn kế tiếp (nhảy cóc, lùi, lặp, hoặc đã tới QC). */
+  ORDER_STAGE_OUT_OF_ORDER(HttpStatus.UNPROCESSABLE_CONTENT, null),
 
   // --- payment ---
   PAYMENT_GATEWAY_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, null),

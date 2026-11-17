@@ -1,12 +1,16 @@
 package com.fa26se088.filmlink.mapper.order;
 
 import com.fa26se088.filmlink.dto.delivery.response.FilmHandoverResponse;
+import com.fa26se088.filmlink.dto.lab.response.FilmLabBriefResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
+import com.fa26se088.filmlink.dto.order.response.OrderFilmHandoverResponse;
 import com.fa26se088.filmlink.dto.order.response.OrderPhotographerResponse;
 import com.fa26se088.filmlink.dto.order.response.ProcessingStageRecordResponse;
+import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderResponse;
+import com.fa26se088.filmlink.dto.order.response.ServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.entity.order.FilmRoll;
 import com.fa26se088.filmlink.entity.order.ProcessingStageRecord;
 import com.fa26se088.filmlink.entity.order.ServiceOrder;
@@ -98,6 +102,78 @@ public class ServiceOrderMapper {
         order.getLabResponseDueAt(),
         order.getExpectedReturnAt(),
         order.getCreatedAt());
+  }
+
+  /** UC25: một dòng danh sách đơn của Photographer; tên lab và số cuộn do service đọc gộp. */
+  public ServiceOrderSummaryResponse toSummaryResponse(
+      ServiceOrder order, String labName, long rollCount) {
+    return new ServiceOrderSummaryResponse(
+        order.getId(),
+        order.getOrderCode(),
+        order.getStatus(),
+        order.getFilmLabId(),
+        labName,
+        rollCount,
+        order.getEstimatedTotalVnd(),
+        order.getFinalTotalVnd(),
+        order.getExpectedReturnAt(),
+        order.getPromisedReturnAt(),
+        order.getCreatedAt());
+  }
+
+  /**
+   * UC25: chi tiết đơn cho Photographer. {@code lab} đọc qua domain lab, {@code handovers} qua
+   * domain delivery (bỏ người thực hiện phía lab), {@code stages} theo thứ tự thời gian (bỏ người
+   * ghi).
+   *
+   * @param payment thông tin thanh toán do service dựng (hiện luôn {@code null})
+   */
+  public ServiceOrderDetailResponse toDetailResponse(
+      ServiceOrder order,
+      FilmLabBriefResponse lab,
+      List<FilmRoll> rolls,
+      List<ProcessingStageRecord> stages,
+      List<FilmHandoverResponse> handovers,
+      Object payment) {
+    return new ServiceOrderDetailResponse(
+        order.getId(),
+        order.getOrderCode(),
+        order.getStatus(),
+        lab,
+        order.getServiceTier(),
+        order.getFilmHandoverMethod(),
+        order.getPaymentMethod(),
+        order.getSpecialRequest(),
+        order.getCustomerAddressLine(),
+        order.getCustomerDistrict(),
+        order.getCustomerProvince(),
+        order.getCustomerPhone(),
+        order.getPickupWindowStartAt(),
+        order.getPickupWindowEndAt(),
+        order.getEstimatedTotalVnd(),
+        order.getFinalTotalVnd(),
+        order.getPriceLockedAt(),
+        order.getExpectedReturnAt(),
+        order.getPromisedReturnAt(),
+        order.getAcceptedAt(),
+        order.getDeliveredAt(),
+        order.getClosedAt(),
+        rolls.stream().map(this::toRollResponse).toList(),
+        stages.stream().map(this::toStageResponse).toList(),
+        handovers.stream().map(this::toOrderHandoverResponse).toList(),
+        payment,
+        order.getCreatedAt());
+  }
+
+  /** BR-25: bàn giao cho Photographer, không có {@code performedByAccountId} / {@code Name}. */
+  public OrderFilmHandoverResponse toOrderHandoverResponse(FilmHandoverResponse handover) {
+    return new OrderFilmHandoverResponse(
+        handover.id(),
+        handover.handoverPoint(),
+        handover.rollCount(),
+        handover.note(),
+        handover.occurredAt(),
+        handover.photos());
   }
 
   /** BR-07: một mốc công đoạn. */

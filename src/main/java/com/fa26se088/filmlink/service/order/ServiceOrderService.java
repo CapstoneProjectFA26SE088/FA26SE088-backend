@@ -1,7 +1,11 @@
 package com.fa26se088.filmlink.service.order;
 
+import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.AnswerScheduleChangeRequest;
 import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
+import com.fa26se088.filmlink.dto.order.request.SearchServiceOrderRequest;
+import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
+import com.fa26se088.filmlink.dto.order.response.ServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderCreationResult;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderQuoteResponse;
 
@@ -33,4 +37,16 @@ public interface ServiceOrderService {
       Long orderId,
       Long scheduleChangeId,
       AnswerScheduleChangeRequest request);
+
+  /** UC25: đơn của Photographer, mới nhất trước, lọc tuỳ chọn theo trạng thái (CR-01, CR-02). */
+  PageResponse<ServiceOrderSummaryResponse> getMyOrders(
+      Long photographerAccountId, SearchServiceOrderRequest request);
+
+  /**
+   * UC25: chi tiết một đơn của Photographer kèm dòng thời gian công đoạn và bàn giao.
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404) khi
+   *     đơn không tồn tại hoặc không thuộc Photographer
+   */
+  ServiceOrderDetailResponse getMyOrder(Long photographerAccountId, Long orderId);
 }

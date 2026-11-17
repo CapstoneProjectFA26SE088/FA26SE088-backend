@@ -68,5 +68,10 @@ public enum AuditAction {
    * UC71: ngày hẹn trả đổi do sự cố máy; before/after ghi {@code promisedReturnAt}, after thêm
    * {@code machineIncidentId}, {@code requiresCustomerResponse}.
    */
-  ORDER_PROMISED_DATE_CHANGED
+  ORDER_PROMISED_DATE_CHANGED,
+
+  /**
+   * UC24, BR-07: Film Lab Owner ghi công đoạn xử lý kế tiếp; before/after ghi {@code stage}.
+   */
+  ORDER_STAGE_RECORDED
 }
