@@ -26,7 +26,7 @@ jobs:
       # Mật khẩu dưới đây chỉ tồn tại trong container dùng một lần của máy ảo CI, không mở ra ngoài
       # và bị xoá khi job kết thúc, nên không phải secret thật.
       postgres:
-        image: postgres:18
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_USER: filmlink
           POSTGRES_PASSWORD: filmlink_ci
