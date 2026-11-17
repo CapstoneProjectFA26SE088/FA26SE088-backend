@@ -40,6 +40,7 @@ import com.fa26se088.filmlink.repository.order.FilmRollRepository;
 import com.fa26se088.filmlink.repository.order.FilmRollRepository.RollCountRow;
 import com.fa26se088.filmlink.repository.order.ProcessingStageRecordRepository;
 import com.fa26se088.filmlink.repository.order.ServiceOrderRepository;
+import com.fa26se088.filmlink.service.archive.ArchiveService;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.delivery.FilmHandoverService;
 import com.fa26se088.filmlink.service.lab.FilmLabService;
@@ -48,6 +49,7 @@ import com.fa26se088.filmlink.service.machine.event.PromisedDateChangedEvent;
 import com.fa26se088.filmlink.service.masterdata.MasterdataService;
 import com.fa26se088.filmlink.service.masterdata.SystemParameterService;
 import com.fa26se088.filmlink.service.notification.event.NotificationEvent;
+import com.fa26se088.filmlink.service.order.DigitalFilmArchiveService;
 import com.fa26se088.filmlink.service.order.ServiceOrderService;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -126,6 +128,7 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
   private final ScheduleChangeService scheduleChangeService;
   private final ProcessingStageRecordRepository processingStageRecordRepository;
   private final FilmHandoverService filmHandoverService;
+  private final ArchiveService archiveService;
   private final Clock clock;
 
   /**
@@ -582,14 +585,42 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
             .orElse(null);
     // TODO(FA26-157): thông tin thanh toán của đơn khi contract PaymentService lên dev
     Object payment = null;
+    List<FilmRoll> rolls =
+        filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId());
     return serviceOrderMapper.toDetailResponse(
         order,
         lab,
-        filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId()),
+        rolls,
         processingStageRecordRepository.findByServiceOrderIdOrderByRecordedAtAscIdAsc(
             order.getId()),
         filmHandoverService.getByServiceOrderId(order.getId()),
+        archiveRollIds(order, rolls),
         payment);
+  }
+
+  /**
+   * UC28: {@code filmRollId → archiveRollId} của các cuộn {@code RECEIVED} khi đơn đã giao scan;
+   * đơn chưa giao scan → rỗng (dòng archive tạo sớm lúc lab gửi link không bị lộ).
+   */
+  private Map<Long, Long> archiveRollIds(ServiceOrder order, List<FilmRoll> rolls) {
+    if (!DigitalFilmArchiveService.SCANS_DELIVERED_STATUSES.contains(order.getStatus())) {
+      return Map.of();
+    }
+    List<Long> receivedIds =
+        rolls.stream()
+            .filter(roll -> roll.getStatus() == FilmRollStatus.RECEIVED)
+            .map(FilmRoll::getId)
+            .toList();
+    Map<Long, Long> result = new LinkedHashMap<>();
+    archiveService
+        .getScanStatuses(receivedIds)
+        .forEach(
+            (filmRollId, status) -> {
+              if (status.archiveRollId() != null) {
+                result.put(filmRollId, status.archiveRollId());
+              }
+            });
+    return result;
   }
 
   /**

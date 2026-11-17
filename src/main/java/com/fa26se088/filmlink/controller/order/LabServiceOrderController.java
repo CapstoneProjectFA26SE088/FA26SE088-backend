@@ -1,10 +1,13 @@
 package com.fa26se088.filmlink.controller.order;
 
+import com.fa26se088.filmlink.dto.archive.request.SetFullResolutionLinkRequest;
+import com.fa26se088.filmlink.dto.archive.response.ScanFileResponse;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
+import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.ScheduleProposalResponse;
@@ -25,6 +28,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
@@ -139,5 +143,51 @@ public class LabServiceOrderController {
       @PathVariable Long id,
       @Valid @RequestBody RecordProcessingStageRequest request) {
     return labServiceOrderService.recordStage(account.id(), id, request);
+  }
+
+  @PostMapping(path = "/{id}/rolls/{rollId}/scans", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  @Operation(
+      summary = "Thêm ảnh xem trước cho một cuộn của đơn IN_PROCESSING; trả mọi ảnh hiện có",
+      description =
+          "UC26, BR-08. Part `files`: 1–40 file JPG, mỗi file ≤ 5 MB, cạnh dài ≤ 2048 px; tối đa"
+              + " 100 ảnh mỗi cuộn, số khung tăng tiếp. Số file sai → 400 VALIDATION_ERROR; không"
+              + " phải JPEG → 400 STORAGE_FILE_TYPE_NOT_ALLOWED; > 5 MB → 413"
+              + " STORAGE_FILE_TOO_LARGE; JPEG hỏng / quá 2048 px → 422 ARCHIVE_PREVIEW_INVALID;"
+              + " quá 100 ảnh → 422 ARCHIVE_PREVIEW_LIMIT_REACHED. Một file lỗi thì không file nào"
+              + " được lưu. Cuộn không thuộc đơn / chưa nhận → 404 ORDER_ROLL_NOT_FOUND; đơn không"
+              + " IN_PROCESSING → 409 ORDER_STATUS_CONFLICT.")
+  public List<ScanFileResponse> addPreviewScans(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @PathVariable Long rollId,
+      @RequestPart(value = "files", required = false) List<MultipartFile> files) {
+    return labServiceOrderService.addPreviewScans(account.id(), id, rollId, files);
+  }
+
+  @PutMapping("/{id}/rolls/{rollId}/full-resolution-link")
+  @Operation(
+      summary = "Gửi link file độ phân giải gốc của một cuộn; link phải truy cập được",
+      description =
+          "UC26, BR-08. url ≤ 1000 ký tự, http/https. Server gửi HEAD/GET tới link (≤ 5 giây, tối"
+              + " đa 3 lần chuyển hướng) và cần mã 2xx; link không truy cập được hoặc trỏ tới địa"
+              + " chỉ nội bộ → 422 ARCHIVE_LINK_UNREACHABLE. Gửi lại thì thay link cũ.")
+  public FilmRollResponse setFullResolutionLink(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @PathVariable Long rollId,
+      @Valid @RequestBody SetFullResolutionLinkRequest request) {
+    return labServiceOrderService.setFullResolutionLink(account.id(), id, rollId, request);
+  }
+
+  @PostMapping("/{id}/scan-delivery")
+  @Operation(
+      summary = "Giao scan: IN_PROCESSING (công đoạn QC) → READY_FOR_HANDOVER",
+      description =
+          "UC26. Chưa tới QC → 422 ORDER_STAGE_OUT_OF_ORDER; còn cuộn RECEIVED thiếu ảnh xem trước"
+              + " hoặc link file gốc → 422 ARCHIVE_DELIVERY_INCOMPLETE (property incompleteRolls);"
+              + " đơn không IN_PROCESSING → 409 ORDER_STATUS_CONFLICT.")
+  public LabServiceOrderResponse deliverScans(
+      @AuthenticationPrincipal AuthenticatedAccount account, @PathVariable Long id) {
+    return labServiceOrderService.deliverScans(account.id(), id);
   }
 }

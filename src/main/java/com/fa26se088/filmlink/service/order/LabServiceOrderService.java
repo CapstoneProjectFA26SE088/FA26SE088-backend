@@ -1,10 +1,13 @@
 package com.fa26se088.filmlink.service.order;
 
+import com.fa26se088.filmlink.dto.archive.request.SetFullResolutionLinkRequest;
+import com.fa26se088.filmlink.dto.archive.response.ScanFileResponse;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
+import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.ScheduleProposalResponse;
@@ -81,4 +84,37 @@ public interface LabServiceOrderService {
    */
   LabServiceOrderResponse recordStage(
       Long ownerAccountId, Long orderId, RecordProcessingStageRequest request);
+
+  /**
+   * UC26, BR-08: lab thêm ảnh xem trước (1–40 JPG mỗi lần) cho một cuộn {@code RECEIVED} của đơn
+   * {@code IN_PROCESSING}.
+   *
+   * @return mọi ảnh xem trước hiện hành của cuộn
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404),
+   *     {@code ORDER_STATUS_CONFLICT} (409), {@code ORDER_ROLL_NOT_FOUND} (404), lỗi của {@code
+   *     ArchiveService#addPreviewScans}
+   */
+  List<ScanFileResponse> addPreviewScans(
+      Long ownerAccountId, Long orderId, Long rollId, List<MultipartFile> files);
+
+  /**
+   * UC26: lab gửi link file độ phân giải gốc của một cuộn {@code RECEIVED} của đơn {@code
+   * IN_PROCESSING}; link phải truy cập được.
+   *
+   * @return cuộn kèm số ảnh xem trước và link đã kiểm
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404),
+   *     {@code ORDER_STATUS_CONFLICT} (409), {@code ORDER_ROLL_NOT_FOUND} (404), {@code
+   *     ARCHIVE_LINK_UNREACHABLE} (422)
+   */
+  FilmRollResponse setFullResolutionLink(
+      Long ownerAccountId, Long orderId, Long rollId, SetFullResolutionLinkRequest request);
+
+  /**
+   * UC26: lab giao scan sau công đoạn QC → {@code READY_FOR_HANDOVER}.
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404),
+   *     {@code ORDER_STATUS_CONFLICT} (409), {@code ORDER_STAGE_OUT_OF_ORDER} (422: chưa tới QC),
+   *     {@code ARCHIVE_DELIVERY_INCOMPLETE} (422: cuộn thiếu ảnh hoặc link)
+   */
+  LabServiceOrderResponse deliverScans(Long ownerAccountId, Long orderId);
 }
