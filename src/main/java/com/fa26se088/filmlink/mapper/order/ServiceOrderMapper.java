@@ -1,6 +1,9 @@
 package com.fa26se088.filmlink.mapper.order;
 
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
+import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
+import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
+import com.fa26se088.filmlink.dto.order.response.OrderPhotographerResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderResponse;
 import com.fa26se088.filmlink.entity.order.FilmRoll;
 import com.fa26se088.filmlink.entity.order.ServiceOrder;
@@ -36,6 +39,48 @@ public class ServiceOrderMapper {
         order.getLabResponseDueAt(),
         rolls.stream().map(this::toRollResponse).toList(),
         payment,
+        order.getCreatedAt());
+  }
+
+  /** UC22: chi tiết đơn cho chủ lab; {@code photographer} do service đọc qua domain account. */
+  public LabServiceOrderResponse toLabResponse(
+      ServiceOrder order, List<FilmRoll> rolls, OrderPhotographerResponse photographer) {
+    return new LabServiceOrderResponse(
+        order.getId(),
+        order.getOrderCode(),
+        order.getStatus(),
+        order.getServiceTier(),
+        order.getFilmHandoverMethod(),
+        order.getPaymentMethod(),
+        order.getSpecialRequest(),
+        order.getCustomerAddressLine(),
+        order.getCustomerDistrict(),
+        order.getCustomerProvince(),
+        order.getCustomerPhone(),
+        order.getPickupWindowStartAt(),
+        order.getPickupWindowEndAt(),
+        order.getEstimatedTotalVnd(),
+        order.getExpectedReturnAt(),
+        order.getLabResponseDueAt(),
+        order.getAcceptedAt(),
+        photographer,
+        rolls.stream().map(this::toRollResponse).toList(),
+        order.getCreatedAt());
+  }
+
+  /** UC22: một dòng danh sách đơn của lab; {@code rollCount} do service đếm gộp cả trang. */
+  public LabServiceOrderSummaryResponse toLabSummaryResponse(ServiceOrder order, long rollCount) {
+    return new LabServiceOrderSummaryResponse(
+        order.getId(),
+        order.getOrderCode(),
+        order.getStatus(),
+        order.getServiceTier(),
+        order.getFilmHandoverMethod(),
+        order.getPaymentMethod(),
+        rollCount,
+        order.getEstimatedTotalVnd(),
+        order.getLabResponseDueAt(),
+        order.getExpectedReturnAt(),
         order.getCreatedAt());
   }
 

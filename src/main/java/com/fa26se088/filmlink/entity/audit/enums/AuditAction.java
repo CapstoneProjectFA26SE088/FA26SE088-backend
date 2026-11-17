@@ -47,5 +47,8 @@ public enum AuditAction {
 
   // --- order ---
   /** UC20: Photographer tạo Service Order; after ghi mã đơn, lab, trạng thái, tổng tạm tính. */
-  ORDER_CREATED
+  ORDER_CREATED,
+
+  /** UC22: Film Lab Owner nhận Service Order; before/after ghi {@code status}. */
+  ORDER_ACCEPTED
 }
