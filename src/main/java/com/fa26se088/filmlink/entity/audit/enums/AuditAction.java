@@ -50,5 +50,11 @@ public enum AuditAction {
   ORDER_CREATED,
 
   /** UC22: Film Lab Owner nhận Service Order; before/after ghi {@code status}. */
-  ORDER_ACCEPTED
+  ORDER_ACCEPTED,
+
+  /**
+   * UC23: Film Lab Owner xác nhận đã nhận phim và chốt giá; before/after ghi {@code status}, {@code
+   * finalTotalVnd}, số cuộn nhận.
+   */
+  ORDER_FILM_RECEIVED
 }
