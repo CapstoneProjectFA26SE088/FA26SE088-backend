@@ -3,6 +3,7 @@ package com.fa26se088.filmlink.service.lab;
 import com.fa26se088.filmlink.dto.lab.request.UpdateFilmLabAcceptingOrdersRequest;
 import com.fa26se088.filmlink.dto.lab.request.UpdateFilmLabOpeningHoursRequest;
 import com.fa26se088.filmlink.dto.lab.request.UpdateFilmLabProfileRequest;
+import com.fa26se088.filmlink.dto.lab.response.FilmLabBriefResponse;
 import com.fa26se088.filmlink.dto.lab.response.FilmLabImageResponse;
 import com.fa26se088.filmlink.dto.lab.response.FilmLabProfileResponse;
 import com.fa26se088.filmlink.dto.lab.response.OrderingFilmLabResponse;
@@ -64,4 +65,11 @@ public interface FilmLabService {
    * trạng thái và master data.
    */
   List<ServicePackageResponse> getPackagesForOrdering(Long filmLabId, Collection<Long> packageIds);
+
+  /**
+   * UC25: tên và địa chỉ của nhiều lab trong một query (danh sách / chi tiết đơn của Photographer,
+   * tránh N+1; domain order không inject repository của lab, R4). Id không tồn tại thì không có
+   * trong kết quả; thứ tự kết quả không xác định.
+   */
+  List<FilmLabBriefResponse> getLabBriefs(Collection<Long> filmLabIds);
 }

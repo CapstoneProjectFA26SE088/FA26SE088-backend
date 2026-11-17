@@ -13,6 +13,7 @@ import com.fa26se088.filmlink.dto.machine.RollGroup;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollReceiptRequest;
+import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
@@ -310,6 +311,128 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
             auditAfter));
     notifyPhotographerScheduleConfirmed(lab, order);
     return toLabResponse(order);
+  }
+
+  /**
+   * UC24: Film Lab Owner ghi công đoạn xử lý kế tiếp.
+   *
+   * <ul>
+   *   <li>CR-14: đơn của lab khác → 404 {@code ORDER_NOT_FOUND}. Đọc đơn bằng {@code SELECT ... FOR
+   *       UPDATE} rồi mới kiểm: hai request ghi công đoạn cùng lúc được tuần tự hoá, request sau
+   *       thấy công đoạn mới và nhận 422.
+   *   <li>Chỉ đơn {@code IN_PROCESSING}; khác → 409 {@code ORDER_STATUS_CONFLICT}.
+   *   <li>BR-07: {@code stage} phải đúng công đoạn kế tiếp của công đoạn mới nhất (thứ tự RECEIVED →
+   *       DEVELOPING → WASHING → DRYING → SCANNING → QC); nhảy cóc, lùi, lặp, hoặc đã tới QC → 422
+   *       {@code ORDER_STAGE_OUT_OF_ORDER}. {@code RECEIVED} đã ghi lúc xác nhận lịch (UC69) nên
+   *       không ghi lại được.
+   *   <li>Insert một dòng {@code processing_stage_records} (append-only), người ghi = chủ lab. Không
+   *       đổi trạng thái đơn (giao scan sau QC là T-10).
+   *   <li>BR-32: audit {@code ORDER_STAGE_RECORDED}. UC04: báo Photographer tên công đoạn tiếng Việt.
+   * </ul>
+   */
+  @Override
+  @Transactional
+  public LabServiceOrderResponse recordStage(
+      Long ownerAccountId, Long orderId, RecordProcessingStageRequest request) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndFilmLabIdForUpdate(orderId, lab.getId())
+            .orElseThrow(LabServiceOrderServiceImpl::orderNotFound);
+    if (order.getStatus() != ServiceOrderStatus.IN_PROCESSING) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Chỉ ghi công đoạn được với đơn đang xử lý; đơn "
+              + order.getOrderCode()
+              + " đang ở trạng thái "
+              + order.getStatus().name()
+              + ".");
+    }
+    ProcessingStage current = currentStage(order.getId());
+    requireNextStage(order, current, request.stage());
+
+    ProcessingStageRecord record = new ProcessingStageRecord();
+    record.setServiceOrderId(order.getId());
+    record.setStage(request.stage());
+    record.setNote(request.note());
+    record.setRecordedByAccountId(ownerAccountId);
+    record.setRecordedAt(clock.instant());
+    processingStageRecordRepository.save(record);
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ORDER_STAGE_RECORDED,
+            AuditTargetType.SERVICE_ORDER,
+            order.getId(),
+            null,
+            Map.of("stage", current.name()),
+            Map.of("stage", request.stage().name())));
+    notifyPhotographerStageRecorded(lab, order, request.stage());
+    return toLabResponse(order);
+  }
+
+  /**
+   * BR-07: công đoạn mới nhất của đơn. Đơn {@code IN_PROCESSING} luôn có dòng {@code RECEIVED} (ghi
+   * lúc xác nhận lịch); nếu thiếu (dữ liệu cũ) thì coi như đang ở {@code RECEIVED}.
+   */
+  private ProcessingStage currentStage(Long orderId) {
+    return processingStageRecordRepository
+        .findFirstByServiceOrderIdOrderByRecordedAtDescIdDesc(orderId)
+        .map(ProcessingStageRecord::getStage)
+        .orElse(ProcessingStage.RECEIVED);
+  }
+
+  /** BR-07: {@code requested} phải đúng công đoạn kế tiếp của {@code current}; khác → 422. */
+  private static void requireNextStage(
+      ServiceOrder order, ProcessingStage current, ProcessingStage requested) {
+    ProcessingStage expected = current.next().orElse(null);
+    if (requested == expected) {
+      return;
+    }
+    Map<String, Object> properties = new LinkedHashMap<>();
+    properties.put("field", "stage");
+    properties.put("currentStage", current.name());
+    if (expected != null) {
+      // Map.copyOf trong BusinessException không nhận giá trị null: đã tới QC thì bỏ trường này.
+      properties.put("expectedStage", expected.name());
+    }
+    String message =
+        expected == null
+            ? "Đơn "
+                + order.getOrderCode()
+                + " đã ở công đoạn cuối "
+                + current.name()
+                + "; không còn công đoạn kế tiếp."
+            : "Công đoạn kế tiếp hợp lệ của đơn "
+                + order.getOrderCode()
+                + " là "
+                + expected.name()
+                + " ("
+                + expected.getVietnameseName()
+                + "); đơn đang ở "
+                + current.name()
+                + ", không ghi được "
+                + requested.name()
+                + ".";
+    throw new BusinessException(ErrorCode.ORDER_STAGE_OUT_OF_ORDER, message, properties);
+  }
+
+  /** UC24, UC04: báo Photographer đơn sang công đoạn mới (gửi sau khi commit). */
+  private void notifyPhotographerStageRecorded(
+      FilmLab lab, ServiceOrder order, ProcessingStage stage) {
+    eventPublisher.publishEvent(
+        new NotificationEvent(
+            order.getPhotographerAccountId(),
+            NotificationType.ORDER_STATUS,
+            "Đơn " + order.getOrderCode() + " đang ở công đoạn " + stage.getVietnameseName(),
+            "Film Lab "
+                + lab.getLabName()
+                + " đã cập nhật đơn "
+                + order.getOrderCode()
+                + ": đang ở công đoạn "
+                + stage.getVietnameseName()
+                + ".",
+            null));
   }
 
   /** UC69: chỉ đơn đang chờ xếp máy; trả trạng thái hiện tại để ghi audit. */
