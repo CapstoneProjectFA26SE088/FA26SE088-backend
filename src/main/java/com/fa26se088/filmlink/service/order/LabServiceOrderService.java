@@ -1,9 +1,12 @@
 package com.fa26se088.filmlink.service.order;
 
 import com.fa26se088.filmlink.dto.common.PageResponse;
+import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
+import java.util.List;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * UC22: Film Lab Owner xem và nhận Service Order của lab mình. Mọi method nhận {@code
@@ -29,4 +32,19 @@ public interface LabServiceOrderService {
    *     khi đơn không còn chờ lab xác nhận
    */
   LabServiceOrderResponse accept(Long ownerAccountId, Long orderId);
+
+  /**
+   * UC23, BR-25: lab xác nhận đã nhận phim của đơn {@code AWAITING_FILM}, đếm từng cuộn, ghi bằng
+   * chứng bàn giao kèm 1–10 ảnh và chốt giá → {@code AWAITING_MACHINE_ASSIGNMENT}.
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404),
+   *     {@code ORDER_STATUS_CONFLICT} (409), {@code VALIDATION_ERROR} (400: danh sách cuộn sai, số
+   *     ảnh ngoài 1–10), {@code ORDER_OPTION_NOT_SUPPORTED} (422: không nhận cuộn nào), lỗi {@code
+   *     STORAGE_*} khi ảnh sai loại / quá dung lượng
+   */
+  LabServiceOrderResponse confirmFilmReceipt(
+      Long ownerAccountId,
+      Long orderId,
+      ConfirmFilmReceiptRequest request,
+      List<MultipartFile> photos);
 }

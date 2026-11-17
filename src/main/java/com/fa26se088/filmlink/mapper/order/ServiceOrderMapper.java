@@ -1,5 +1,6 @@
 package com.fa26se088.filmlink.mapper.order;
 
+import com.fa26se088.filmlink.dto.delivery.response.FilmHandoverResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
@@ -42,9 +43,15 @@ public class ServiceOrderMapper {
         order.getCreatedAt());
   }
 
-  /** UC22: chi tiết đơn cho chủ lab; {@code photographer} do service đọc qua domain account. */
+  /**
+   * UC22, UC23: chi tiết đơn cho chủ lab; {@code photographer} do service đọc qua domain account,
+   * {@code handovers} đọc qua domain delivery.
+   */
   public LabServiceOrderResponse toLabResponse(
-      ServiceOrder order, List<FilmRoll> rolls, OrderPhotographerResponse photographer) {
+      ServiceOrder order,
+      List<FilmRoll> rolls,
+      OrderPhotographerResponse photographer,
+      List<FilmHandoverResponse> handovers) {
     return new LabServiceOrderResponse(
         order.getId(),
         order.getOrderCode(),
@@ -60,11 +67,14 @@ public class ServiceOrderMapper {
         order.getPickupWindowStartAt(),
         order.getPickupWindowEndAt(),
         order.getEstimatedTotalVnd(),
+        order.getFinalTotalVnd(),
+        order.getPriceLockedAt(),
         order.getExpectedReturnAt(),
         order.getLabResponseDueAt(),
         order.getAcceptedAt(),
         photographer,
         rolls.stream().map(this::toRollResponse).toList(),
+        handovers,
         order.getCreatedAt());
   }
 
