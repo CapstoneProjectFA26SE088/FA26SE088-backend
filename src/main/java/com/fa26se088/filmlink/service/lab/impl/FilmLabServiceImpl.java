@@ -9,18 +9,24 @@ import com.fa26se088.filmlink.dto.lab.request.UpdateFilmLabOpeningHoursRequest;
 import com.fa26se088.filmlink.dto.lab.request.UpdateFilmLabProfileRequest;
 import com.fa26se088.filmlink.dto.lab.response.FilmLabImageResponse;
 import com.fa26se088.filmlink.dto.lab.response.FilmLabProfileResponse;
+import com.fa26se088.filmlink.dto.lab.response.OrderingFilmLabResponse;
+import com.fa26se088.filmlink.dto.lab.response.ServicePackageResponse;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
 import com.fa26se088.filmlink.entity.lab.FilmLabImage;
 import com.fa26se088.filmlink.entity.lab.FilmLabOpeningHour;
+import com.fa26se088.filmlink.entity.lab.ServicePackage;
+import com.fa26se088.filmlink.entity.lab.ServicePackageScanOption;
 import com.fa26se088.filmlink.exception.BusinessException;
 import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.mapper.lab.FilmLabMapper;
+import com.fa26se088.filmlink.mapper.lab.ServicePackageMapper;
 import com.fa26se088.filmlink.repository.lab.FilmLabImageRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabOpeningHourRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabRepository;
 import com.fa26se088.filmlink.repository.lab.ServicePackageRepository;
+import com.fa26se088.filmlink.repository.lab.ServicePackageScanOptionRepository;
 import com.fa26se088.filmlink.service.account.event.LabRegistrationApprovedEvent;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.FilmLabService;
@@ -29,6 +35,7 @@ import com.fa26se088.filmlink.service.lab.MachineReadiness;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -70,6 +77,8 @@ public class FilmLabServiceImpl implements FilmLabService {
   private final StorageClient storageClient;
   private final AuditLogService auditLogService;
   private final FilmLabMapper filmLabMapper;
+  private final ServicePackageScanOptionRepository scanOptionRepository;
+  private final ServicePackageMapper servicePackageMapper;
 
   /**
    * BR-03: đơn đăng ký được duyệt thì tạo Film Lab, chưa nhận đơn ({@code is_accepting_orders =
@@ -273,6 +282,45 @@ public class FilmLabServiceImpl implements FilmLabService {
   @Transactional(readOnly = true)
   public boolean isReadyToAcceptOrders(Long filmLabId) {
     return orderReadiness(filmLabId).ready();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public OrderingFilmLabResponse getLabForOrdering(Long filmLabId) {
+    FilmLab lab =
+        filmLabRepository
+            .findById(filmLabId)
+            .orElseThrow(
+                () -> new BusinessException(ErrorCode.LAB_NOT_FOUND, "Không tìm thấy Film Lab."));
+    return new OrderingFilmLabResponse(
+        lab.getId(), lab.getOwnerAccountId(), lab.getLabName(), lab.isAcceptingOrders());
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<ServicePackageResponse> getPackagesForOrdering(
+      Long filmLabId, Collection<Long> packageIds) {
+    if (packageIds.isEmpty()) {
+      return List.of();
+    }
+    List<ServicePackage> packages =
+        servicePackageRepository.findByFilmLabIdAndIdIn(filmLabId, packageIds);
+    if (packages.isEmpty()) {
+      return List.of();
+    }
+    Map<Long, List<ServicePackageScanOption>> optionsByPackage =
+        scanOptionRepository
+            .findByServicePackageIdInOrderByPriceVndAscIdAsc(
+                packages.stream().map(ServicePackage::getId).toList())
+            .stream()
+            .collect(Collectors.groupingBy(ServicePackageScanOption::getServicePackageId));
+    return packages.stream()
+        .map(
+            servicePackage ->
+                servicePackageMapper.toResponse(
+                    servicePackage,
+                    optionsByPackage.getOrDefault(servicePackage.getId(), List.of())))
+        .toList();
   }
 
   /** BR-57, BR-34: ném {@code LAB_MACHINES_NOT_READY} nếu lab chưa đủ điều kiện nhận đơn. */

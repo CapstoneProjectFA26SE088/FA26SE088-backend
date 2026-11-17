@@ -28,10 +28,12 @@ import com.fa26se088.filmlink.entity.lab.FilmLabOpeningHour;
 import com.fa26se088.filmlink.exception.BusinessException;
 import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.mapper.lab.FilmLabMapper;
+import com.fa26se088.filmlink.mapper.lab.ServicePackageMapper;
 import com.fa26se088.filmlink.repository.lab.FilmLabImageRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabOpeningHourRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabRepository;
 import com.fa26se088.filmlink.repository.lab.ServicePackageRepository;
+import com.fa26se088.filmlink.repository.lab.ServicePackageScanOptionRepository;
 import com.fa26se088.filmlink.service.account.event.LabRegistrationApprovedEvent;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
@@ -75,6 +77,7 @@ class FilmLabServiceImplTest {
   @Mock private MachineReadiness machineReadiness;
   @Mock private StorageClient storageClient;
   @Mock private AuditLogService auditLogService;
+  @Mock private ServicePackageScanOptionRepository scanOptionRepository;
 
   private FilmLabServiceImpl service;
   private FilmLab lab;
@@ -91,7 +94,9 @@ class FilmLabServiceImplTest {
             machineReadiness,
             storageClient,
             auditLogService,
-            new FilmLabMapper());
+            new FilmLabMapper(),
+            scanOptionRepository,
+            new ServicePackageMapper());
     lab = new FilmLab();
     ReflectionTestUtils.setField(lab, "id", LAB_ID);
     lab.setOwnerAccountId(OWNER_ID);

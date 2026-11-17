@@ -43,5 +43,9 @@ public enum AuditAction {
   LAB_SERVICE_PACKAGE_CREATED,
 
   /** UC13: Film Lab Owner mở bán / ngừng bán Service Package; before/after ghi {@code status}. */
-  LAB_SERVICE_PACKAGE_STATUS_CHANGED
+  LAB_SERVICE_PACKAGE_STATUS_CHANGED,
+
+  // --- order ---
+  /** UC20: Photographer tạo Service Order; after ghi mã đơn, lab, trạng thái, tổng tạm tính. */
+  ORDER_CREATED
 }
