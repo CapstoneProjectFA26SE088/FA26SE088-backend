@@ -18,7 +18,8 @@ import java.util.List;
  * nhận ngày hẹn trả (UC69); {@code stages} là timeline công đoạn (BR-07), cũ nhất trước.
  *
  * <p>{@code deliveredAt}, {@code keepNegativesAtLab} có giá trị sau khi lab trả phim / giữ âm bản
- * (UC27); {@code closedAt} sau khi Photographer xác nhận đã nhận (UC28).
+ * (UC27); {@code closedAt} sau khi Photographer xác nhận đã nhận (UC28). {@code cancelledAt},
+ * {@code cancellationReason} có giá trị khi Photographer huỷ đơn (UC60).
  *
  * <p>Chưa có shipment, thanh toán (task sau).
  */
@@ -46,6 +47,8 @@ public record LabServiceOrderResponse(
     Instant acceptedAt,
     Instant deliveredAt,
     Instant closedAt,
+    Instant cancelledAt,
+    String cancellationReason,
     boolean keepNegativesAtLab,
     OrderPhotographerResponse photographer,
     List<FilmRollResponse> rolls,

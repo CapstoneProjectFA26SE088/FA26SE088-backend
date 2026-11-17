@@ -88,5 +88,11 @@ public enum AuditAction {
   ORDER_FILM_RETURNED,
 
   /** UC28: Photographer xác nhận đã nhận, đơn sang {@code CLOSED}; before/after ghi {@code status}. */
-  ORDER_CLOSED
+  ORDER_CLOSED,
+
+  /**
+   * UC60, BR-38: Photographer huỷ đơn trước khi lab nhận phim, đơn sang {@code CANCELLED};
+   * before/after ghi {@code status}, after thêm {@code cancellationFeeVnd} và {@code reason}.
+   */
+  ORDER_CANCELLED
 }

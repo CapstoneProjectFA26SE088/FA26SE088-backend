@@ -19,6 +19,9 @@ import java.util.List;
  *
  * @param lab {@code null} nếu không đọc được lab (không xảy ra với dữ liệu hợp lệ)
  * @param keepNegativesAtLab {@code true} khi lab giữ âm bản theo yêu cầu thay vì trả phim (UC27)
+ * @param cancelledAt thời điểm huỷ đơn (UC60); {@code null} khi đơn chưa huỷ
+ * @param cancellationReason lý do huỷ do Photographer nhập (UC60)
+ * @param cancellationFeeVnd phí huỷ; huỷ trước khi lab nhận phim luôn 0 (BR-38)
  * @param payment thông tin thanh toán; hiện luôn {@code null} (chờ contract thanh toán, FA26-157)
  */
 public record ServiceOrderDetailResponse(
@@ -44,6 +47,9 @@ public record ServiceOrderDetailResponse(
     Instant acceptedAt,
     Instant deliveredAt,
     Instant closedAt,
+    Instant cancelledAt,
+    String cancellationReason,
+    Long cancellationFeeVnd,
     boolean keepNegativesAtLab,
     List<FilmRollResponse> rolls,
     List<ProcessingStageRecordResponse> stages,

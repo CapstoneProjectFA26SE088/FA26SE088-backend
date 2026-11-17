@@ -2,6 +2,7 @@ package com.fa26se088.filmlink.controller.order;
 
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.AnswerScheduleChangeRequest;
+import com.fa26se088.filmlink.dto.order.request.CancelServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderCreationResult;
@@ -30,8 +31,8 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * UC20, UC72, UC25, UC28: Photographer báo giá, tạo Service Order, trả lời thay đổi lịch, theo dõi
- * đơn của mình và xác nhận đã nhận. {@code
+ * UC20, UC72, UC25, UC28, UC60: Photographer báo giá, tạo Service Order, trả lời thay đổi lịch,
+ * theo dõi đơn của mình, xác nhận đã nhận và huỷ đơn trước khi lab nhận phim. {@code
  * hasRole('PHOTOGRAPHER')} gồm cả PHOTOGRAPHY_EXPERT (BR-05, {@code RoleHierarchy}).
  */
 @RestController
@@ -116,5 +117,21 @@ public class ServiceOrderController {
   public ServiceOrderDetailResponse confirmReceipt(
       @AuthenticationPrincipal AuthenticatedAccount account, @PathVariable Long id) {
     return serviceOrderService.confirmReceipt(account.id(), id);
+  }
+
+  @PostMapping("/{id}/cancel")
+  @Operation(
+      summary = "Huỷ đơn trước khi lab nhận phim, không mất phí → CANCELLED (UC60, BR-38)",
+      description =
+          "Body {\"reason\": 10–500 ký tự}. Chỉ từ AWAITING_PAYMENT, AWAITING_LAB_CONFIRMATION,"
+              + " AWAITING_FILM; trạng thái khác (kể cả huỷ lần hai) → 409 ORDER_STATUS_CONFLICT."
+              + " Đơn không tồn tại hoặc của người khác → 404 ORDER_NOT_FOUND. Hoàn tiền chờ"
+              + " contract thanh toán. Trả chi tiết đơn (có cancelledAt, cancellationReason,"
+              + " cancellationFeeVnd = 0).")
+  public ServiceOrderDetailResponse cancel(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @Valid @RequestBody CancelServiceOrderRequest request) {
+    return serviceOrderService.cancel(account.id(), id, request);
   }
 }
