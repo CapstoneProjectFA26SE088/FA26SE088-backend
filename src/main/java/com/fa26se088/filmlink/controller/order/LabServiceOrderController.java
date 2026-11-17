@@ -2,9 +2,11 @@ package com.fa26se088.filmlink.controller.order;
 
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
+import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
+import com.fa26se088.filmlink.dto.order.response.ScheduleProposalResponse;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.order.LabServiceOrderService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -22,13 +24,15 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * UC22, UC23: Film Lab Owner xem, nhận Service Order và xác nhận nhận phim của lab mình (hàng
+ * UC22, UC23, UC69: Film Lab Owner xem, nhận Service Order, xác nhận nhận phim và ngày hẹn trả
+ * (hàng
  * đợi công việc của lab, tiền tố {@code /api/v1/lab/...} theo SPEC-00 §9). Lab luôn là lab của
  * tài khoản đang đăng nhập, không nhận {@code labId} từ client.
  */
@@ -38,7 +42,9 @@ import org.springframework.web.multipart.MultipartFile;
 @PreAuthorize("hasRole('FILM_LAB_OWNER')")
 @Tag(
     name = "Film Lab Orders",
-    description = "Film Lab Owner xem, nhận Service Order và nhận phim (UC22, UC23)")
+    description =
+        "Film Lab Owner xem, nhận Service Order, nhận phim và xác nhận ngày hẹn trả (UC22, UC23,"
+            + " UC69)")
 public class LabServiceOrderController {
 
   private final LabServiceOrderService labServiceOrderService;
@@ -92,5 +98,30 @@ public class LabServiceOrderController {
       @Valid @RequestPart("data") ConfirmFilmReceiptRequest data,
       @RequestPart(value = "photos", required = false) List<MultipartFile> photos) {
     return labServiceOrderService.confirmFilmReceipt(account.id(), id, data, photos);
+  }
+
+  @GetMapping("/{id}/schedule-proposal")
+  @Operation(
+      summary = "Ngày hẹn trả đề xuất cho đơn AWAITING_MACHINE_ASSIGNMENT; không ghi DB",
+      description =
+          "UC69, BR-58–BR-61. Trạng thái khác → 409 ORDER_STATUS_CONFLICT; đơn của lab khác →"
+              + " 404 ORDER_NOT_FOUND.")
+  public ScheduleProposalResponse getScheduleProposal(
+      @AuthenticationPrincipal AuthenticatedAccount account, @PathVariable Long id) {
+    return labServiceOrderService.getScheduleProposal(account.id(), id);
+  }
+
+  @PostMapping("/{id}/schedule-confirmation")
+  @Operation(
+      summary = "Xác nhận ngày hẹn trả: AWAITING_MACHINE_ASSIGNMENT → IN_PROCESSING",
+      description =
+          "UC69, BR-07, BR-60. Body tuỳ chọn; không gửi promisedReturnAt = dùng ngày đề xuất. Ngày"
+              + " sớm hơn đề xuất → 422 ORDER_PROMISED_DATE_TOO_EARLY; lab không xếp được lịch →"
+              + " 422 ORDER_SCHEDULE_INFEASIBLE; sai trạng thái → 409 ORDER_STATUS_CONFLICT.")
+  public LabServiceOrderResponse confirmSchedule(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @Valid @RequestBody(required = false) ConfirmScheduleRequest request) {
+    return labServiceOrderService.confirmSchedule(account.id(), id, request);
   }
 }

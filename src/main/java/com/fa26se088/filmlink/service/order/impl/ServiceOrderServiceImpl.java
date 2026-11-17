@@ -8,6 +8,7 @@ import com.fa26se088.filmlink.dto.masterdata.response.FilmFormatResponse;
 import com.fa26se088.filmlink.dto.masterdata.response.FilmProcessResponse;
 import com.fa26se088.filmlink.dto.masterdata.response.FilmStockResponse;
 import com.fa26se088.filmlink.dto.masterdata.response.ServiceTypeResponse;
+import com.fa26se088.filmlink.dto.order.request.AnswerScheduleChangeRequest;
 import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollRequest;
 import com.fa26se088.filmlink.dto.order.response.FilmRollQuoteResponse;
@@ -34,6 +35,8 @@ import com.fa26se088.filmlink.repository.order.FilmRollRepository;
 import com.fa26se088.filmlink.repository.order.ServiceOrderRepository;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.FilmLabService;
+import com.fa26se088.filmlink.service.machine.ScheduleChangeService;
+import com.fa26se088.filmlink.service.machine.event.PromisedDateChangedEvent;
 import com.fa26se088.filmlink.service.masterdata.MasterdataService;
 import com.fa26se088.filmlink.service.masterdata.SystemParameterService;
 import com.fa26se088.filmlink.service.notification.event.NotificationEvent;
@@ -54,10 +57,14 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ServiceOrderServiceImpl implements ServiceOrderService {
@@ -79,6 +86,13 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
   private static final String ERRORS = "errors";
   private static final String ROLLS = "rolls";
 
+  /** UC72: lựa chọn Chờ; giá trị của {@code schedule_changes.customer_choice}. */
+  static final String SCHEDULE_CHANGE_WAIT = "WAIT";
+
+  /** UC71: đơn ở các trạng thái này không còn đổi ngày hẹn trả. */
+  private static final Set<ServiceOrderStatus> PROMISED_DATE_FINAL_STATUSES =
+      Set.of(ServiceOrderStatus.DELIVERED, ServiceOrderStatus.CLOSED, ServiceOrderStatus.CANCELLED);
+
   private final SecureRandom random = new SecureRandom();
 
   private final ServiceOrderRepository serviceOrderRepository;
@@ -89,6 +103,7 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
   private final AuditLogService auditLogService;
   private final ApplicationEventPublisher eventPublisher;
   private final ServiceOrderMapper serviceOrderMapper;
+  private final ScheduleChangeService scheduleChangeService;
   private final Clock clock;
 
   /**
@@ -443,6 +458,138 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
     roll.setExpressSurchargeVnd(0L);
     roll.setStatus(FilmRollStatus.DECLARED);
     return roll;
+  }
+
+  /**
+   * UC72: Photographer trả lời thay đổi lịch do sự cố máy.
+   *
+   * <ul>
+   *   <li>CR-14: đơn không tồn tại hoặc không thuộc Photographer → 404 {@code ORDER_NOT_FOUND}.
+   *   <li>Giai đoạn này chỉ {@code WAIT}; {@code CANCEL} (huỷ + hoàn tiền 100%) và {@code
+   *       TRANSFER} (chuyển lab) là Later → 422 {@code ORDER_OPTION_NOT_SUPPORTED}.
+   *   <li>Việc kiểm {@code scheduleChangeId} thuộc đơn, còn chờ trả lời và ghi câu trả lời thuộc
+   *       domain machine ({@link ScheduleChangeService#answer}); order không đọc {@code
+   *       schedule_changes}.
+   * </ul>
+   */
+  @Override
+  @Transactional
+  public void answerScheduleChange(
+      Long photographerAccountId,
+      Long orderId,
+      Long scheduleChangeId,
+      AnswerScheduleChangeRequest request) {
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndPhotographerAccountId(orderId, photographerAccountId)
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn dịch vụ."));
+    if (!SCHEDULE_CHANGE_WAIT.equals(request.choice())) {
+      throw new BusinessException(
+          ErrorCode.ORDER_OPTION_NOT_SUPPORTED,
+          "Chưa hỗ trợ lựa chọn "
+              + request.choice()
+              + " (huỷ đơn hoặc chuyển lab sẽ có ở giai đoạn sau). Hiện chỉ chọn được Chờ (WAIT).");
+    }
+    scheduleChangeService.answer(scheduleChangeId, order.getId(), request.choice(), request.note());
+  }
+
+  /**
+   * UC71, BR-61: ngày hẹn trả đổi do sự cố máy (domain machine phát {@link
+   * PromisedDateChangedEvent}, mỗi đơn bị ảnh hưởng một event).
+   *
+   * <ul>
+   *   <li>Đồng bộ, {@code MANDATORY}: chạy trong transaction tái xếp lịch của domain machine; cập
+   *       nhật đơn lỗi thì việc tái xếp lịch cũng rollback. Publish ngoài transaction → {@code
+   *       IllegalTransactionStateException}.
+   *   <li>Bỏ qua (chỉ ghi log, idempotent): đơn không tồn tại; đơn đã {@code DELIVERED}, {@code
+   *       CLOSED}, {@code CANCELLED}; đơn chưa xác nhận ngày hẹn ({@code
+   *       ck_service_orders_promised}); ngày hẹn đã bằng ngày mới (event gửi lại).
+   *   <li>Còn lại: {@code promised_return_at = newPromisedAt}; báo Photographer ngày cũ, ngày mới
+   *       (giờ Việt Nam, CR-04) và, nếu {@code requiresCustomerResponse}, yêu cầu chọn Chờ / Huỷ /
+   *       Chuyển lab (UC72).
+   *   <li>BR-32: audit {@code ORDER_PROMISED_DATE_CHANGED}. Actor do {@code AuditLogService} lấy
+   *       từ {@code SecurityContext} của thread phát event (không có thì System).
+   * </ul>
+   */
+  @EventListener
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void onPromisedDateChanged(PromisedDateChangedEvent event) {
+    Optional<ServiceOrder> found = serviceOrderRepository.findById(event.serviceOrderId());
+    if (found.isEmpty()) {
+      log.warn(
+          "PromisedDateChangedEvent for unknown service order {}, skipping",
+          event.serviceOrderId());
+      return;
+    }
+    ServiceOrder order = found.get();
+    if (PROMISED_DATE_FINAL_STATUSES.contains(order.getStatus())) {
+      log.info(
+          "PromisedDateChangedEvent for service order {} in status {}, skipping",
+          order.getId(),
+          order.getStatus());
+      return;
+    }
+    if (order.getMachineAssignmentConfirmedAt() == null) {
+      log.warn(
+          "PromisedDateChangedEvent for service order {} without confirmed promised date, skipping",
+          order.getId());
+      return;
+    }
+    if (event.newPromisedAt().equals(order.getPromisedReturnAt())) {
+      log.info(
+          "Service order {} already has promised date {}, skipping",
+          order.getId(),
+          event.newPromisedAt());
+      return;
+    }
+
+    Instant previous = order.getPromisedReturnAt();
+    order.setPromisedReturnAt(event.newPromisedAt());
+    order = serviceOrderRepository.saveAndFlush(order);
+
+    Map<String, Object> auditBefore = new LinkedHashMap<>();
+    auditBefore.put("promisedReturnAt", previous == null ? null : previous.toString());
+    Map<String, Object> auditAfter = new LinkedHashMap<>();
+    auditAfter.put("promisedReturnAt", order.getPromisedReturnAt().toString());
+    auditAfter.put("machineIncidentId", event.machineIncidentId());
+    auditAfter.put("requiresCustomerResponse", event.requiresCustomerResponse());
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ORDER_PROMISED_DATE_CHANGED,
+            AuditTargetType.SERVICE_ORDER,
+            order.getId(),
+            null,
+            auditBefore,
+            auditAfter));
+    notifyPhotographerPromisedDateChanged(order, event);
+  }
+
+  /** UC71, UC04: báo Photographer ngày hẹn trả mới (gửi sau khi commit). */
+  private void notifyPhotographerPromisedDateChanged(
+      ServiceOrder order, PromisedDateChangedEvent event) {
+    String body =
+        "Do sự cố máy tại lab, ngày hẹn trả của đơn "
+            + order.getOrderCode()
+            + " đổi từ "
+            + NOTIFICATION_TIME.format(event.oldPromisedAt().atZone(VIETNAM_ZONE))
+            + " sang "
+            + NOTIFICATION_TIME.format(event.newPromisedAt().atZone(VIETNAM_ZONE))
+            + ".";
+    if (event.requiresCustomerResponse()) {
+      body +=
+          " Ngày mới muộn hơn cam kết của dịch vụ. Vui lòng chọn Chờ, Huỷ đơn hoặc Chuyển lab"
+              + " trong mục đơn hàng.";
+    }
+    eventPublisher.publishEvent(
+        new NotificationEvent(
+            order.getPhotographerAccountId(),
+            NotificationType.ORDER_STATUS,
+            "Đơn " + order.getOrderCode() + " đổi ngày hẹn trả",
+            body,
+            null));
   }
 
   /** UC22: báo chủ lab có đơn mới cần nhận / từ chối (gửi sau khi transaction commit). */

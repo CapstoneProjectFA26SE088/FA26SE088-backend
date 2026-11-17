@@ -56,5 +56,17 @@ public enum AuditAction {
    * UC23: Film Lab Owner xác nhận đã nhận phim và chốt giá; before/after ghi {@code status}, {@code
    * finalTotalVnd}, số cuộn nhận.
    */
-  ORDER_FILM_RECEIVED
+  ORDER_FILM_RECEIVED,
+
+  /**
+   * UC69: Film Lab Owner xác nhận ngày hẹn trả, đơn sang {@code IN_PROCESSING}; before/after ghi
+   * {@code status}, {@code promisedReturnAt}.
+   */
+  ORDER_SCHEDULE_CONFIRMED,
+
+  /**
+   * UC71: ngày hẹn trả đổi do sự cố máy; before/after ghi {@code promisedReturnAt}, after thêm
+   * {@code machineIncidentId}, {@code requiresCustomerResponse}.
+   */
+  ORDER_PROMISED_DATE_CHANGED
 }

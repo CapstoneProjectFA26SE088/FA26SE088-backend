@@ -94,6 +94,10 @@ public enum ErrorCode {
   ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, null),
   /** UC22: thao tác không hợp lệ với trạng thái hiện tại của đơn, hoặc đơn vừa bị người khác đổi. */
   ORDER_STATUS_CONFLICT(HttpStatus.CONFLICT, null),
+  /** UC69, UH-51: lab không đủ máy / công suất phù hợp để xử lý đơn. */
+  ORDER_SCHEDULE_INFEASIBLE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** BR-60: ngày hẹn trả lab chọn sớm hơn ngày đề xuất; lab chỉ được dời muộn hơn. */
+  ORDER_PROMISED_DATE_TOO_EARLY(HttpStatus.UNPROCESSABLE_CONTENT, null),
 
   // --- payment ---
   PAYMENT_GATEWAY_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, null),

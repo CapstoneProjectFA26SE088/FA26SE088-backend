@@ -2,9 +2,11 @@ package com.fa26se088.filmlink.service.order;
 
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
+import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
+import com.fa26se088.filmlink.dto.order.response.ScheduleProposalResponse;
 import java.util.List;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -47,4 +49,25 @@ public interface LabServiceOrderService {
       Long orderId,
       ConfirmFilmReceiptRequest request,
       List<MultipartFile> photos);
+
+  /**
+   * UC69, BR-58–BR-61: ngày hẹn trả đề xuất cho đơn {@code AWAITING_MACHINE_ASSIGNMENT}. Không ghi
+   * DB.
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404),
+   *     {@code ORDER_STATUS_CONFLICT} (409)
+   */
+  ScheduleProposalResponse getScheduleProposal(Long ownerAccountId, Long orderId);
+
+  /**
+   * UC69, BR-07, BR-60: lab xác nhận ngày hẹn trả → {@code IN_PROCESSING}, ghi công đoạn đầu tiên
+   * {@code RECEIVED}.
+   *
+   * @param request {@code null} hoặc {@code promisedReturnAt = null} = dùng ngày đề xuất
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404),
+   *     {@code ORDER_STATUS_CONFLICT} (409), {@code ORDER_SCHEDULE_INFEASIBLE} (422), {@code
+   *     ORDER_PROMISED_DATE_TOO_EARLY} (422)
+   */
+  LabServiceOrderResponse confirmSchedule(
+      Long ownerAccountId, Long orderId, ConfirmScheduleRequest request);
 }
