@@ -22,5 +22,9 @@ public enum AuditTargetType {
   // --- lab ---
   FILM_LAB,
   /** UC13: gói dịch vụ trong bảng giá của lab. */
-  SERVICE_PACKAGE
+  SERVICE_PACKAGE,
+
+  // --- order ---
+  /** UC20: đơn dịch vụ tráng / scan. */
+  SERVICE_ORDER
 }

@@ -26,6 +26,7 @@ import com.fa26se088.filmlink.service.lab.LabAccessService;
 import com.fa26se088.filmlink.service.lab.ServicePackageService;
 import com.fa26se088.filmlink.service.masterdata.MasterdataService;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -127,7 +128,8 @@ public class ServicePackageServiceImpl implements ServicePackageService {
   /**
    * UC13, BR-16: cùng các rule như khi tạo; tên không được trùng gói khác của lab. Danh sách mức
    * scan được thay toàn bộ, đối chiếu theo nhãn: nhãn còn giữ thì cập nhật giá (giữ nguyên {@code
-   * id} mà {@code film_rolls} có thể đang tham chiếu), nhãn mới thì thêm, nhãn bị bỏ thì xoá. Sửa
+   * id} mà {@code film_rolls} có thể đang tham chiếu), nhãn mới thì thêm, nhãn bị bỏ thì xoá — trừ
+   * khi đang được {@code film_rolls} tham chiếu (409 {@code LAB_SCAN_OPTION_IN_USE}). Sửa
    * giá không đổi đơn đã tạo (đơn chụp lại giá vào {@code film_rolls}). Trạng thái không đổi ở đây.
    */
   @Override
@@ -274,11 +276,32 @@ public class ServicePackageServiceImpl implements ServicePackageService {
       kept.add(option);
     }
     if (!existing.isEmpty()) {
+      requireScanOptionsNotInUse(existing.values());
       scanOptionRepository.deleteAll(existing.values());
       scanOptionRepository.flush();
     }
     scanOptionRepository.saveAllAndFlush(kept);
     return scanOptionRepository.findByServicePackageIdOrderByPriceVndAscIdAsc(servicePackageId);
+  }
+
+  /**
+   * UC13 (follow-up FA26-80): mức scan đã được cuộn phim của đơn tham chiếu thì không xoá được
+   * ({@code fk_film_rolls_scan_option}, nếu không sẽ thành lỗi 500). Từ chối 409 {@code
+   * LAB_SCAN_OPTION_IN_USE}, gợi ý ngừng bán gói rồi tạo gói mới thay vì bỏ mức scan.
+   */
+  private void requireScanOptionsNotInUse(Collection<ServicePackageScanOption> toDelete) {
+    List<String> inUse =
+        scanOptionRepository.findLabelsReferencedByFilmRolls(
+            toDelete.stream().map(ServicePackageScanOption::getId).toList());
+    if (!inUse.isEmpty()) {
+      throw new BusinessException(
+          ErrorCode.LAB_SCAN_OPTION_IN_USE,
+          "Mức scan "
+              + String.join(", ", inUse)
+              + " đang được đơn hàng sử dụng nên không xoá được."
+              + " Hãy ngừng bán gói (WITHDRAWN) và tạo gói mới thay vì xoá mức scan.",
+          Map.of("scanOptionLabels", inUse));
+    }
   }
 
   private ServicePackage requireOwnedPackage(Long labId, Long packageId) {

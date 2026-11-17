@@ -5,6 +5,10 @@ import com.fa26se088.filmlink.dto.lab.request.UpdateFilmLabOpeningHoursRequest;
 import com.fa26se088.filmlink.dto.lab.request.UpdateFilmLabProfileRequest;
 import com.fa26se088.filmlink.dto.lab.response.FilmLabImageResponse;
 import com.fa26se088.filmlink.dto.lab.response.FilmLabProfileResponse;
+import com.fa26se088.filmlink.dto.lab.response.OrderingFilmLabResponse;
+import com.fa26se088.filmlink.dto.lab.response.ServicePackageResponse;
+import java.util.Collection;
+import java.util.List;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
@@ -44,4 +48,20 @@ public interface FilmLabService {
    * cho cổng bật nhận đơn và cho việc lọc lab công khai.
    */
   boolean isReadyToAcceptOrders(Long filmLabId);
+
+  /**
+   * UC20: lab cho domain order khi báo giá / tạo đơn (domain order không inject repository của lab,
+   * R4).
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code LAB_NOT_FOUND} (404) khi lab
+   *     không tồn tại
+   */
+  OrderingFilmLabResponse getLabForOrdering(Long filmLabId);
+
+  /**
+   * UC20: các gói trong {@code packageIds} <b>thuộc lab</b> {@code filmLabId} (mọi trạng thái), kèm
+   * mức scan. Id không tồn tại hoặc thuộc lab khác thì không có trong kết quả; bên gọi tự kiểm
+   * trạng thái và master data.
+   */
+  List<ServicePackageResponse> getPackagesForOrdering(Long filmLabId, Collection<Long> packageIds);
 }

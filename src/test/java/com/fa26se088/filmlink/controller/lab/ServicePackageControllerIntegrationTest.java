@@ -17,6 +17,7 @@ import com.fa26se088.filmlink.security.JwtTokenProvider;
 import com.fa26se088.filmlink.service.lab.impl.FilmLabFixture;
 import com.jayway.jsonpath.JsonPath;
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -182,6 +183,80 @@ class ServicePackageControllerIntegrationTest {
         .andExpect(jsonPath("$.scanOptions[0].id").value(idOfS))
         .andExpect(jsonPath("$.scanOptions[0].priceVnd").value(25_000))
         .andExpect(jsonPath("$.scanOptions[1].resolutionLabel").value("XL"));
+  }
+
+  /**
+   * Follow-up FA26-80: mức scan đã được {@code film_rolls} tham chiếu thì không bỏ được khi sửa gói
+   * → 409 {@code LAB_SCAN_OPTION_IN_USE}; gói và mức scan giữ nguyên.
+   */
+  @Test
+  void update_removingScanOptionUsedByFilmRoll_returns409() throws Exception {
+    long packageId =
+        createPackage(
+            "Gói Đang Dùng",
+            "[{\"resolutionLabel\":\"S\",\"priceVnd\":20000},"
+                + "{\"resolutionLabel\":\"L\",\"priceVnd\":50000}]");
+    long labId =
+        jdbcTemplate.queryForObject(
+            "SELECT film_lab_id FROM service_packages WHERE id = ?", Long.class, packageId);
+    Long idOfL =
+        jdbcTemplate.queryForObject(
+            "SELECT id FROM service_package_scan_options"
+                + " WHERE service_package_id = ? AND resolution_label = 'L'",
+            Long.class,
+            packageId);
+    UserAccount photographer = fixture.createAccount(UserAccountRole.PHOTOGRAPHER);
+    Long orderId =
+        jdbcTemplate.queryForObject(
+            """
+            INSERT INTO service_orders
+                (order_code, idempotency_key, photographer_account_id, film_lab_id, service_tier,
+                 film_handover_method, payment_method, estimated_total_vnd, expected_return_at)
+            VALUES (?, ?, ?, ?, 'STANDARD', 'SELF_DROP_OFF', 'ONLINE', 110000, now())
+            RETURNING id
+            """,
+            Long.class,
+            "IT" + UUID.randomUUID().toString().substring(0, 12),
+            UUID.randomUUID(),
+            photographer.getId(),
+            labId);
+    jdbcTemplate.update(
+        """
+        INSERT INTO film_rolls
+            (service_order_id, roll_sequence, film_stock_name_text, film_format_id,
+             film_process_id, service_package_id, service_package_scan_option_id,
+             exposure_count, unit_price_vnd, scan_option_price_vnd)
+        VALUES (?, 1, 'Kodak Gold 200', ?, ?, ?, ?, 36, 60000, 50000)
+        """,
+        orderId,
+        format135Id,
+        c41Id,
+        packageId,
+        idOfL);
+    try {
+      mockMvc
+          .perform(
+              put(PATH + "/" + packageId)
+                  .header(HttpHeaders.AUTHORIZATION, bearer(owner))
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      packageJson(
+                          "Gói Đang Dùng", 60_000, 5,
+                          "[{\"resolutionLabel\":\"S\",\"priceVnd\":20000}]")))
+          .andExpect(status().isConflict())
+          .andExpect(jsonPath("$.errorCode").value("LAB_SCAN_OPTION_IN_USE"))
+          .andExpect(jsonPath("$.scanOptionLabels[0]").value("L"));
+
+      assertThat(
+              jdbcTemplate.queryForObject(
+                  "SELECT count(*) FROM service_package_scan_options WHERE service_package_id = ?",
+                  Integer.class,
+                  packageId))
+          .isEqualTo(2);
+    } finally {
+      jdbcTemplate.update("DELETE FROM film_rolls WHERE service_order_id = ?", orderId);
+      jdbcTemplate.update("DELETE FROM service_orders WHERE id = ?", orderId);
+    }
   }
 
   // --- Rule ---

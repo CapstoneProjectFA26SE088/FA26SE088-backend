@@ -67,6 +67,24 @@ public enum ErrorCode {
   LAB_PACKAGE_NAME_DUPLICATE(HttpStatus.UNPROCESSABLE_CONTENT, null),
   /** BR-16: Service Type / Film Process / Film Format không tồn tại hoặc không còn ACTIVE. */
   LAB_PACKAGE_MASTERDATA_INACTIVE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC13: mức scan bị bỏ khi sửa gói đang được {@code film_rolls} tham chiếu; nên ngừng bán gói. */
+  LAB_SCAN_OPTION_IN_USE(HttpStatus.CONFLICT, null),
+
+  // --- order ---
+  /** UC20, BR-34, BR-57: lab chưa bật nhận đơn hoặc chưa đủ điều kiện nhận đơn. */
+  ORDER_LAB_NOT_ACCEPTING(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC20: gói không thuộc lab, không ON_SALE, hoặc master data của gói đã ngừng dùng (BR-16). */
+  ORDER_PACKAGE_NOT_ORDERABLE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC20: khổ phim của cuộn khác khổ phim của gói. */
+  ORDER_FILM_FORMAT_MISMATCH(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC20: mức scan không thuộc gói đã chọn. */
+  ORDER_SCAN_OPTION_INVALID(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC20: gói không nhận push/pull mà cuộn có số stop khác 0. */
+  ORDER_PUSH_PULL_NOT_AVAILABLE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC20: dòng phim không có trong danh mục hoặc đã ngừng dùng (BR-16). */
+  ORDER_FILM_STOCK_INVALID(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** Phương án chưa hỗ trợ ở giai đoạn này: Express, Parcel Shipping, COD. */
+  ORDER_OPTION_NOT_SUPPORTED(HttpStatus.UNPROCESSABLE_CONTENT, null),
 
   // --- payment ---
   PAYMENT_GATEWAY_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, null),

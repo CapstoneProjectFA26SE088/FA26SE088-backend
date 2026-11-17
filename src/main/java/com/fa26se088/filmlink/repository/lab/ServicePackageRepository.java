@@ -2,6 +2,7 @@ package com.fa26se088.filmlink.repository.lab;
 
 import com.fa26se088.filmlink.entity.lab.ServicePackage;
 import com.fa26se088.filmlink.entity.lab.enums.ServicePackageStatus;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -45,6 +46,9 @@ public interface ServicePackageRepository extends JpaRepository<ServicePackage, 
                 AND ff.status = 'ACTIVE')
           """)
   boolean existsDisplayablePackageOnSale(@Param("filmLabId") Long filmLabId);
+
+  /** UC20: các gói trong {@code ids} thuộc lab {@code filmLabId} (gói của lab khác bị bỏ qua). */
+  List<ServicePackage> findByFilmLabIdAndIdIn(Long filmLabId, Collection<Long> ids);
 
   /** UC05: bảng giá công khai của lab: các gói đang bán, rẻ nhất trước. */
   List<ServicePackage> findByFilmLabIdAndStatusOrderByPriceVndAscIdAsc(
