@@ -2,6 +2,7 @@ package com.fa26se088.filmlink.service.order;
 
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.AnswerScheduleChangeRequest;
+import com.fa26se088.filmlink.dto.order.request.CancelServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
@@ -59,4 +60,15 @@ public interface ServiceOrderService {
    *     không ở {@code DELIVERED}
    */
   ServiceOrderDetailResponse confirmReceipt(Long photographerAccountId, Long orderId);
+
+  /**
+   * UC60, BR-38: Photographer huỷ đơn trước khi lab nhận phim ({@code AWAITING_PAYMENT}, {@code
+   * AWAITING_LAB_CONFIRMATION}, {@code AWAITING_FILM}) → {@code CANCELLED}, không mất phí.
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404) khi
+   *     đơn không tồn tại hoặc không thuộc Photographer, {@code ORDER_STATUS_CONFLICT} (409) khi đơn
+   *     ở trạng thái khác (kể cả đã huỷ)
+   */
+  ServiceOrderDetailResponse cancel(
+      Long photographerAccountId, Long orderId, CancelServiceOrderRequest request);
 }

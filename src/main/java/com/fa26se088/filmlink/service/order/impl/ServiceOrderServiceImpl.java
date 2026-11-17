@@ -11,6 +11,7 @@ import com.fa26se088.filmlink.dto.masterdata.response.FilmProcessResponse;
 import com.fa26se088.filmlink.dto.masterdata.response.FilmStockResponse;
 import com.fa26se088.filmlink.dto.masterdata.response.ServiceTypeResponse;
 import com.fa26se088.filmlink.dto.order.request.AnswerScheduleChangeRequest;
+import com.fa26se088.filmlink.dto.order.request.CancelServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchServiceOrderRequest;
@@ -106,6 +107,13 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
   /** UC71: đơn ở các trạng thái này không còn đổi ngày hẹn trả. */
   private static final Set<ServiceOrderStatus> PROMISED_DATE_FINAL_STATUSES =
       Set.of(ServiceOrderStatus.DELIVERED, ServiceOrderStatus.CLOSED, ServiceOrderStatus.CANCELLED);
+
+  /** UC60, BR-38: các trạng thái trước khi lab nhận phim, Photographer huỷ không mất phí. */
+  static final Set<ServiceOrderStatus> CANCELLABLE_BEFORE_RECEIPT =
+      Set.of(
+          ServiceOrderStatus.AWAITING_PAYMENT,
+          ServiceOrderStatus.AWAITING_LAB_CONFIRMATION,
+          ServiceOrderStatus.AWAITING_FILM);
 
   /** CR-01: danh sách đơn của Photographer, 20 dòng mặc định, tối đa 100. */
   private static final int DEFAULT_PAGE_SIZE = 20;
@@ -638,6 +646,102 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
             Map.of("status", order.getStatus().name())));
     notifyLabOwnerClosed(filmLabService.getLabForOrdering(order.getFilmLabId()), order);
     return toDetailResponse(order);
+  }
+
+  /**
+   * UC60, BR-38: Photographer huỷ đơn trước khi lab nhận phim, không mất phí.
+   *
+   * <ul>
+   *   <li>CR-14: đơn không tồn tại hoặc của người khác → 404 {@code ORDER_NOT_FOUND}. Đọc đơn bằng
+   *       {@code SELECT ... FOR UPDATE} rồi mới kiểm trạng thái.
+   *   <li>Chỉ từ {@link #CANCELLABLE_BEFORE_RECEIPT}; khác (kể cả huỷ lần hai) → 409 {@code
+   *       ORDER_STATUS_CONFLICT}. Huỷ sau khi lab nhận phim (phí 20%) là Later.
+   *   <li>BR-38: {@code status = CANCELLED}, {@code cancelled_at = now}, {@code
+   *       cancelled_by_account_id} = Photographer, {@code cancellation_reason}, {@code
+   *       cancellation_fee_vnd = 0} (hoàn 100%).
+   *   <li>UC04: báo chủ lab chỉ khi đơn đã tới lab ({@code AWAITING_LAB_CONFIRMATION}, {@code
+   *       AWAITING_FILM}); đơn {@code AWAITING_PAYMENT} không báo. BR-32: audit {@code
+   *       ORDER_CANCELLED}.
+   * </ul>
+   */
+  @Override
+  @Transactional
+  public ServiceOrderDetailResponse cancel(
+      Long photographerAccountId, Long orderId, CancelServiceOrderRequest request) {
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndPhotographerAccountIdForUpdate(orderId, photographerAccountId)
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn dịch vụ."));
+    ServiceOrderStatus before = order.getStatus();
+    if (!CANCELLABLE_BEFORE_RECEIPT.contains(before)) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Đơn "
+              + order.getOrderCode()
+              + " đang ở trạng thái "
+              + before.name()
+              + ". Chỉ huỷ được đơn trước khi lab nhận phim; sau khi lab đã nhận phim, huỷ đơn có"
+              + " phí và chưa được hỗ trợ ở giai đoạn này.");
+    }
+
+    // Bean Validation đếm cả khoảng trắng đầu/cuối; kiểm lại độ dài sau khi cắt.
+    String reason = request.reason().strip();
+    if (reason.length() < 10) {
+      throw fieldError("reason", "Lý do huỷ đơn từ 10 đến 500 ký tự.");
+    }
+    order.setStatus(ServiceOrderStatus.CANCELLED);
+    order.setCancelledAt(clock.instant());
+    order.setCancelledByAccountId(photographerAccountId);
+    order.setCancellationReason(reason);
+    order.setCancellationFeeVnd(0L);
+    try {
+      order = serviceOrderRepository.saveAndFlush(order);
+    } catch (OptimisticLockingFailureException ex) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
+    }
+
+    // TODO(FA26-157): netPaid = PaymentService.netPaidForOrder(orderId); > 0 →
+    // createOrderRefund(orderId, netPaid, reason) (BR-38: hoàn 100%)
+    // TODO(FA26-157): đơn AWAITING_PAYMENT — huỷ payment PENDING (phía Phát)
+    // TODO(P-09): đơn PICKUP ở AWAITING_FILM — huỷ shipment lấy phim nếu đã tạo (hiện chưa tạo)
+
+    Map<String, Object> auditAfter = new LinkedHashMap<>();
+    auditAfter.put("status", order.getStatus().name());
+    auditAfter.put("cancellationFeeVnd", order.getCancellationFeeVnd());
+    auditAfter.put("reason", reason);
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ORDER_CANCELLED,
+            AuditTargetType.SERVICE_ORDER,
+            order.getId(),
+            null,
+            Map.of("status", before.name()),
+            auditAfter));
+    if (before != ServiceOrderStatus.AWAITING_PAYMENT) {
+      notifyLabOwnerCancelled(filmLabService.getLabForOrdering(order.getFilmLabId()), order);
+    }
+    return toDetailResponse(order);
+  }
+
+  /** UC60, UC04: báo chủ lab Photographer đã huỷ đơn, kèm lý do (gửi sau khi commit). */
+  private void notifyLabOwnerCancelled(OrderingFilmLabResponse lab, ServiceOrder order) {
+    eventPublisher.publishEvent(
+        new NotificationEvent(
+            lab.ownerAccountId(),
+            NotificationType.ORDER_STATUS,
+            "Đơn " + order.getOrderCode() + " đã bị huỷ",
+            "Photographer đã huỷ đơn "
+                + order.getOrderCode()
+                + " tại Film Lab "
+                + lab.labName()
+                + ". Lý do: "
+                + order.getCancellationReason(),
+            null));
   }
 
   /** UC28, UC04: báo chủ lab Photographer đã xác nhận, đơn đã đóng (gửi sau khi commit). */

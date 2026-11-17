@@ -91,6 +91,8 @@ public class ServiceOrderMapper {
         order.getAcceptedAt(),
         order.getDeliveredAt(),
         order.getClosedAt(),
+        order.getCancelledAt(),
+        order.getCancellationReason(),
         order.isKeepNegativesAtLab(),
         photographer,
         rolls.stream()
@@ -174,6 +176,9 @@ public class ServiceOrderMapper {
         order.getAcceptedAt(),
         order.getDeliveredAt(),
         order.getClosedAt(),
+        order.getCancelledAt(),
+        order.getCancellationReason(),
+        order.getCancellationFeeVnd(),
         order.isKeepNegativesAtLab(),
         rolls.stream()
             .map(roll -> toRollResponse(roll, archiveRollIds.get(roll.getId()), null, null))
