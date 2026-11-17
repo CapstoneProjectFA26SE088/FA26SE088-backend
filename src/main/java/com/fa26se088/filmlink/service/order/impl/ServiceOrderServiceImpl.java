@@ -70,6 +70,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -579,6 +580,83 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
                 () ->
                     new BusinessException(
                         ErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn dịch vụ."));
+    return toDetailResponse(order);
+  }
+
+  /**
+   * UC28: Photographer xác nhận đã nhận phim / đồng ý lab giữ âm bản.
+   *
+   * <ul>
+   *   <li>CR-14: đơn không tồn tại hoặc của người khác → 404 {@code ORDER_NOT_FOUND}. Đọc đơn bằng
+   *       {@code SELECT ... FOR UPDATE} rồi mới kiểm trạng thái: chỉ {@code DELIVERED}; khác (kể cả
+   *       xác nhận lần hai) → 409 {@code ORDER_STATUS_CONFLICT}.
+   *   <li>{@code closed_at = now}, trạng thái → {@code CLOSED}.
+   *   <li>UC04: báo chủ lab đơn đã đóng. BR-32: audit {@code ORDER_CLOSED}.
+   * </ul>
+   */
+  @Override
+  @Transactional
+  public ServiceOrderDetailResponse confirmReceipt(Long photographerAccountId, Long orderId) {
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndPhotographerAccountIdForUpdate(orderId, photographerAccountId)
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.ORDER_NOT_FOUND, "Không tìm thấy đơn dịch vụ."));
+    ServiceOrderStatus before = order.getStatus();
+    if (before != ServiceOrderStatus.DELIVERED) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Chỉ xác nhận đã nhận được với đơn lab đã trả phim; đơn "
+              + order.getOrderCode()
+              + " đang ở trạng thái "
+              + before.name()
+              + ".");
+    }
+
+    order.setClosedAt(clock.instant());
+    order.setStatus(ServiceOrderStatus.CLOSED);
+    try {
+      order = serviceOrderRepository.saveAndFlush(order);
+    } catch (OptimisticLockingFailureException ex) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
+    }
+
+    // TODO(P-04): CommissionService.recordForClosedOrder(...) trong cùng transaction (SPEC-00 §4.6)
+    // khi contract lên dev
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ORDER_CLOSED,
+            AuditTargetType.SERVICE_ORDER,
+            order.getId(),
+            null,
+            Map.of("status", before.name()),
+            Map.of("status", order.getStatus().name())));
+    notifyLabOwnerClosed(filmLabService.getLabForOrdering(order.getFilmLabId()), order);
+    return toDetailResponse(order);
+  }
+
+  /** UC28, UC04: báo chủ lab Photographer đã xác nhận, đơn đã đóng (gửi sau khi commit). */
+  private void notifyLabOwnerClosed(OrderingFilmLabResponse lab, ServiceOrder order) {
+    eventPublisher.publishEvent(
+        new NotificationEvent(
+            lab.ownerAccountId(),
+            NotificationType.ORDER_STATUS,
+            "Đơn " + order.getOrderCode() + " đã hoàn tất",
+            "Photographer đã xác nhận nhận phim của đơn "
+                + order.getOrderCode()
+                + " tại Film Lab "
+                + lab.labName()
+                + ". Đơn đã đóng.",
+            null));
+  }
+
+  /** UC25, UC28: dựng chi tiết đơn cho Photographer (lab, cuộn, công đoạn, bàn giao, archive). */
+  private ServiceOrderDetailResponse toDetailResponse(ServiceOrder order) {
     FilmLabBriefResponse lab =
         filmLabService.getLabBriefs(List.of(order.getFilmLabId())).stream()
             .findFirst()

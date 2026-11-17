@@ -89,6 +89,9 @@ public class ServiceOrderMapper {
         order.getMachineAssignmentConfirmedAt(),
         order.getLabResponseDueAt(),
         order.getAcceptedAt(),
+        order.getDeliveredAt(),
+        order.getClosedAt(),
+        order.isKeepNegativesAtLab(),
         photographer,
         rolls.stream()
             .map(roll -> toLabRollResponse(roll, scanStatuses.get(roll.getId())))
@@ -171,6 +174,7 @@ public class ServiceOrderMapper {
         order.getAcceptedAt(),
         order.getDeliveredAt(),
         order.getClosedAt(),
+        order.isKeepNegativesAtLab(),
         rolls.stream()
             .map(roll -> toRollResponse(roll, archiveRollIds.get(roll.getId()), null, null))
             .toList(),

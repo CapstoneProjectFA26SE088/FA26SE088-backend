@@ -5,6 +5,7 @@ import com.fa26se088.filmlink.dto.archive.response.ScanFileResponse;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
+import com.fa26se088.filmlink.dto.order.request.RecordFilmReturnRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
@@ -36,8 +37,8 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 /**
- * UC22, UC23, UC69, UC24: Film Lab Owner xem, nhận Service Order, xác nhận nhận phim, ngày hẹn trả
- * và ghi công đoạn xử lý (hàng
+ * UC22, UC23, UC69, UC24, UC26, UC27: Film Lab Owner xem, nhận Service Order, xác nhận nhận phim,
+ * ngày hẹn trả, ghi công đoạn xử lý, giao scan và trả phim (hàng
  * đợi công việc của lab, tiền tố {@code /api/v1/lab/...} theo SPEC-00 §9). Lab luôn là lab của
  * tài khoản đang đăng nhập, không nhận {@code labId} từ client.
  */
@@ -189,5 +190,28 @@ public class LabServiceOrderController {
   public LabServiceOrderResponse deliverScans(
       @AuthenticationPrincipal AuthenticatedAccount account, @PathVariable Long id) {
     return labServiceOrderService.deliverScans(account.id(), id);
+  }
+
+  @PostMapping(path = "/{id}/film-return", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  @Operation(
+      summary = "Trả phim tại lab hoặc giữ âm bản theo yêu cầu: READY_FOR_HANDOVER → DELIVERED",
+      description =
+          "UC27, BR-25. Part `data` (JSON, Content-Type application/json): keepNegativesAtLab"
+              + " (bắt buộc), note ≤ 500. keepNegativesAtLab = false: part `photos` 1–10 ảnh"
+              + " JPG/PNG ≤ 10 MB, ghi bàn giao COLLECTED_AT_LAB; số ảnh sai → 400"
+              + " VALIDATION_ERROR. keepNegativesAtLab = true: không ghi bàn giao, ảnh gửi kèm bị"
+              + " bỏ qua. Sai trạng thái → 409 ORDER_STATUS_CONFLICT; đơn của lab khác → 404"
+              + " ORDER_NOT_FOUND. Gửi phim về bằng vận chuyển chưa hỗ trợ.")
+  @io.swagger.v3.oas.annotations.parameters.RequestBody(
+      content =
+          @Content(
+              mediaType = MediaType.MULTIPART_FORM_DATA_VALUE,
+              encoding = @Encoding(name = "data", contentType = MediaType.APPLICATION_JSON_VALUE)))
+  public LabServiceOrderResponse returnFilm(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @Valid @RequestPart("data") RecordFilmReturnRequest data,
+      @RequestPart(value = "photos", required = false) List<MultipartFile> photos) {
+    return labServiceOrderService.returnFilm(account.id(), id, data, photos);
   }
 }
