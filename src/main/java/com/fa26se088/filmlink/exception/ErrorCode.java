@@ -100,6 +100,20 @@ public enum ErrorCode {
   ORDER_PROMISED_DATE_TOO_EARLY(HttpStatus.UNPROCESSABLE_CONTENT, null),
   /** BR-07, UC24: công đoạn ghi không phải công đoạn kế tiếp (nhảy cóc, lùi, lặp, hoặc đã tới QC). */
   ORDER_STAGE_OUT_OF_ORDER(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC26: cuộn không thuộc đơn, hoặc không ở trạng thái RECEIVED (không lộ cuộn của đơn khác). */
+  ORDER_ROLL_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+
+  // --- archive ---
+  /** UC26: link file gốc không truy cập được (không trả 2xx, quá thời gian, host nội bộ). */
+  ARCHIVE_LINK_UNREACHABLE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC26: giao scan khi còn cuộn RECEIVED thiếu ảnh xem trước hoặc thiếu link file gốc đã kiểm. */
+  ARCHIVE_DELIVERY_INCOMPLETE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC26: ảnh xem trước không đọc được như JPEG hoặc cạnh dài vượt 2048 px. */
+  ARCHIVE_PREVIEW_INVALID(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC26: vượt 100 ảnh xem trước hiện hành của một cuộn ({@code ck_scan_files_frame}). */
+  ARCHIVE_PREVIEW_LIMIT_REACHED(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC28: cuộn không có trong archive của người xem (không tồn tại, của người khác, chưa giao). */
+  ARCHIVE_ROLL_NOT_FOUND(HttpStatus.NOT_FOUND, null),
 
   // --- payment ---
   PAYMENT_GATEWAY_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, null),

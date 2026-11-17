@@ -4,6 +4,9 @@ import static com.fa26se088.filmlink.service.order.impl.ServiceOrderServiceImpl.
 import static com.fa26se088.filmlink.service.order.impl.ServiceOrderServiceImpl.VIETNAM_ZONE;
 
 import com.fa26se088.filmlink.dto.account.response.UserAccountResponse;
+import com.fa26se088.filmlink.dto.archive.request.SetFullResolutionLinkRequest;
+import com.fa26se088.filmlink.dto.archive.response.RollScanStatusResponse;
+import com.fa26se088.filmlink.dto.archive.response.ScanFileResponse;
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.delivery.request.RecordFilmHandoverRequest;
@@ -15,6 +18,7 @@ import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
+import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.OrderPhotographerResponse;
@@ -41,6 +45,7 @@ import com.fa26se088.filmlink.repository.order.FilmRollRepository.RollCountRow;
 import com.fa26se088.filmlink.repository.order.ProcessingStageRecordRepository;
 import com.fa26se088.filmlink.repository.order.ServiceOrderRepository;
 import com.fa26se088.filmlink.service.account.UserAccountService;
+import com.fa26se088.filmlink.service.archive.ArchiveService;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.delivery.FilmHandoverService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
@@ -93,6 +98,7 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
   private final FilmHandoverService filmHandoverService;
   private final ProcessingStageRecordRepository processingStageRecordRepository;
   private final CapacitySchedulingService capacitySchedulingService;
+  private final ArchiveService archiveService;
   private final Clock clock;
 
   /**
@@ -795,13 +801,226 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
   private LabServiceOrderResponse toLabResponse(ServiceOrder order) {
     UserAccountResponse account =
         userAccountService.getCurrentAccount(order.getPhotographerAccountId());
+    List<FilmRoll> rolls =
+        filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId());
     return serviceOrderMapper.toLabResponse(
         order,
-        filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId()),
+        rolls,
         new OrderPhotographerResponse(account.id(), account.fullName(), account.phoneNumber()),
         filmHandoverService.getByServiceOrderId(order.getId()),
         processingStageRecordRepository.findByServiceOrderIdOrderByRecordedAtAscIdAsc(
-            order.getId()));
+            order.getId()),
+        archiveService.getScanStatuses(rolls.stream().map(FilmRoll::getId).toList()));
+  }
+
+  /**
+   * UC26: Film Lab Owner thêm ảnh xem trước cho một cuộn.
+   *
+   * <ul>
+   *   <li>CR-14: đơn của lab khác → 404 {@code ORDER_NOT_FOUND}. Khoá dòng đơn ({@code SELECT ...
+   *       FOR UPDATE}) để hai lần upload cùng cuộn không trùng số khung và không vượt 100 ảnh.
+   *   <li>Chỉ đơn {@code IN_PROCESSING}; khác (kể cả đã giao scan) → 409 {@code
+   *       ORDER_STATUS_CONFLICT}.
+   *   <li>Cuộn phải thuộc đơn và {@code RECEIVED}; khác → 404 {@code ORDER_ROLL_NOT_FOUND}.
+   *   <li>BR-08: kiểm file, upload, số khung, giới hạn 100 ảnh do {@link ArchiveService}.
+   * </ul>
+   */
+  @Override
+  @Transactional
+  public List<ScanFileResponse> addPreviewScans(
+      Long ownerAccountId, Long orderId, Long rollId, List<MultipartFile> files) {
+    ServiceOrder order = lockOrderInProcessing(ownerAccountId, orderId, "thêm ảnh xem trước");
+    FilmRoll roll = requireReceivedRoll(order, rollId);
+    return archiveService.addPreviewScans(roll.getId(), files);
+  }
+
+  /**
+   * UC26: Film Lab Owner gửi link file độ phân giải gốc của một cuộn. Cùng kiểm tra đơn / cuộn như
+   * {@link #addPreviewScans}; kiểm link (chống SSRF, cần 2xx) và lưu do {@link ArchiveService}.
+   * Gửi lại thì thay link cũ.
+   */
+  @Override
+  @Transactional
+  public FilmRollResponse setFullResolutionLink(
+      Long ownerAccountId, Long orderId, Long rollId, SetFullResolutionLinkRequest request) {
+    ServiceOrder order = lockOrderInProcessing(ownerAccountId, orderId, "gửi link file gốc");
+    FilmRoll roll = requireReceivedRoll(order, rollId);
+    RollScanStatusResponse status =
+        archiveService.setFullResolutionLink(roll.getId(), request.url());
+    return serviceOrderMapper.toLabRollResponse(roll, status);
+  }
+
+  /**
+   * UC26: Film Lab Owner giao scan.
+   *
+   * <ul>
+   *   <li>CR-14: đơn của lab khác → 404. Khoá dòng đơn rồi kiểm: chỉ {@code IN_PROCESSING}; khác
+   *       (kể cả giao lần hai) → 409 {@code ORDER_STATUS_CONFLICT}.
+   *   <li>BR-07: công đoạn mới nhất phải là {@code QC}; khác → 422 {@code
+   *       ORDER_STAGE_OUT_OF_ORDER}.
+   *   <li>BR-08: <b>mọi</b> cuộn {@code RECEIVED} có ≥ 1 ảnh xem trước và link file gốc đã kiểm;
+   *       thiếu → 422 {@code ARCHIVE_DELIVERY_INCOMPLETE}, liệt kê từng cuộn thiếu gì.
+   *   <li>Đánh dấu đã giao ({@code archive_rolls.delivered_at = now}) qua {@link ArchiveService};
+   *       đơn → {@code READY_FOR_HANDOVER}.
+   *   <li>UC04: báo Photographer scan đã có trong Digital Film Archive. BR-32: audit {@code
+   *       ORDER_SCANS_DELIVERED}.
+   * </ul>
+   */
+  @Override
+  @Transactional
+  public LabServiceOrderResponse deliverScans(Long ownerAccountId, Long orderId) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndFilmLabIdForUpdate(orderId, lab.getId())
+            .orElseThrow(LabServiceOrderServiceImpl::orderNotFound);
+    final ServiceOrderStatus before = requireInProcessing(order, "giao scan");
+    ProcessingStage current = currentStage(order.getId());
+    if (current != ProcessingStage.QC) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STAGE_OUT_OF_ORDER,
+          "Chỉ giao scan được sau công đoạn QC (Kiểm tra chất lượng); đơn "
+              + order.getOrderCode()
+              + " đang ở công đoạn "
+              + current.name()
+              + " ("
+              + current.getVietnameseName()
+              + ").",
+          Map.of("currentStage", current.name(), "expectedStage", ProcessingStage.QC.name()));
+    }
+
+    List<FilmRoll> receivedRolls =
+        filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId()).stream()
+            .filter(roll -> roll.getStatus() == FilmRollStatus.RECEIVED)
+            .toList();
+    List<Long> receivedIds = receivedRolls.stream().map(FilmRoll::getId).toList();
+    Map<Long, RollScanStatusResponse> statuses = archiveService.getScanStatuses(receivedIds);
+    requireAllRollsReady(order, receivedRolls, statuses);
+
+    archiveService.markDelivered(receivedIds);
+    // TODO(FA26-157): final_total > PaymentService.netPaidForOrder → AWAITING_TOP_UP (SPEC-00 §4.5)
+    order.setStatus(ServiceOrderStatus.READY_FOR_HANDOVER);
+    try {
+      order = serviceOrderRepository.saveAndFlush(order);
+    } catch (OptimisticLockingFailureException ex) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
+    }
+
+    long previewCount =
+        statuses.values().stream().mapToLong(RollScanStatusResponse::previewCount).sum();
+    Map<String, Object> auditAfter = new LinkedHashMap<>();
+    auditAfter.put("status", order.getStatus().name());
+    auditAfter.put("deliveredRollCount", receivedRolls.size());
+    auditAfter.put("previewScanCount", previewCount);
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ORDER_SCANS_DELIVERED,
+            AuditTargetType.SERVICE_ORDER,
+            order.getId(),
+            null,
+            Map.of("status", before.name()),
+            auditAfter));
+    notifyPhotographerScansDelivered(lab, order, receivedRolls.size(), previewCount);
+    return toLabResponse(order);
+  }
+
+  /** UC26: khoá đơn của lab mình và yêu cầu {@code IN_PROCESSING}. */
+  private ServiceOrder lockOrderInProcessing(Long ownerAccountId, Long orderId, String action) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndFilmLabIdForUpdate(orderId, lab.getId())
+            .orElseThrow(LabServiceOrderServiceImpl::orderNotFound);
+    requireInProcessing(order, action);
+    return order;
+  }
+
+  private static ServiceOrderStatus requireInProcessing(ServiceOrder order, String action) {
+    if (order.getStatus() != ServiceOrderStatus.IN_PROCESSING) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Chỉ "
+              + action
+              + " được với đơn đang xử lý; đơn "
+              + order.getOrderCode()
+              + " đang ở trạng thái "
+              + order.getStatus().name()
+              + ".");
+    }
+    return order.getStatus();
+  }
+
+  /** UC26: cuộn phải thuộc đơn và lab đã nhận ({@code RECEIVED}); khác → 404. */
+  private FilmRoll requireReceivedRoll(ServiceOrder order, Long rollId) {
+    return filmRollRepository
+        .findByIdAndServiceOrderId(rollId, order.getId())
+        .filter(roll -> roll.getStatus() == FilmRollStatus.RECEIVED)
+        .orElseThrow(
+            () ->
+                new BusinessException(
+                    ErrorCode.ORDER_ROLL_NOT_FOUND,
+                    "Không tìm thấy cuộn phim đã nhận trong đơn " + order.getOrderCode() + "."));
+  }
+
+  /** UC26, BR-08: mọi cuộn RECEIVED có ≥ 1 ảnh xem trước và link đã kiểm; gom mọi cuộn thiếu. */
+  private static void requireAllRollsReady(
+      ServiceOrder order, List<FilmRoll> rolls, Map<Long, RollScanStatusResponse> statuses) {
+    List<String> problems = new ArrayList<>();
+    List<Map<String, Object>> incomplete = new ArrayList<>();
+    for (FilmRoll roll : rolls) {
+      RollScanStatusResponse status = statuses.get(roll.getId());
+      boolean missingPreview = status == null || status.previewCount() == 0;
+      boolean missingLink = status == null || !status.hasVerifiedLink();
+      if (!missingPreview && !missingLink) {
+        continue;
+      }
+      List<String> missing = new ArrayList<>();
+      if (missingPreview) {
+        missing.add("ảnh xem trước");
+      }
+      if (missingLink) {
+        missing.add("link file gốc");
+      }
+      problems.add("cuộn #" + roll.getRollSequence() + " thiếu " + String.join(" và ", missing));
+      Map<String, Object> item = new LinkedHashMap<>();
+      item.put("filmRollId", roll.getId());
+      item.put("rollSequence", roll.getRollSequence());
+      item.put("missingPreviewScan", missingPreview);
+      item.put("missingFullResolutionLink", missingLink);
+      incomplete.add(item);
+    }
+    if (!incomplete.isEmpty()) {
+      throw new BusinessException(
+          ErrorCode.ARCHIVE_DELIVERY_INCOMPLETE,
+          "Chưa giao scan được đơn "
+              + order.getOrderCode()
+              + ": "
+              + String.join("; ", problems)
+              + ".",
+          Map.of("incompleteRolls", incomplete));
+    }
+  }
+
+  /** UC26, UC04: báo Photographer scan đã có trong Digital Film Archive (gửi sau khi commit). */
+  private void notifyPhotographerScansDelivered(
+      FilmLab lab, ServiceOrder order, int rollCount, long previewCount) {
+    eventPublisher.publishEvent(
+        new NotificationEvent(
+            order.getPhotographerAccountId(),
+            NotificationType.ORDER_STATUS,
+            "Đơn " + order.getOrderCode() + " đã có ảnh scan",
+            "Film Lab "
+                + lab.getLabName()
+                + " đã giao ảnh scan của đơn "
+                + order.getOrderCode()
+                + ": "
+                + rollCount
+                + " cuộn, "
+                + previewCount
+                + " ảnh xem trước kèm link file gốc. Xem trong Kho phim số (Digital Film Archive).",
+            null));
   }
 
   private static BusinessException orderNotFound() {

@@ -73,5 +73,11 @@ public enum AuditAction {
   /**
    * UC24, BR-07: Film Lab Owner ghi công đoạn xử lý kế tiếp; before/after ghi {@code stage}.
    */
-  ORDER_STAGE_RECORDED
+  ORDER_STAGE_RECORDED,
+
+  /**
+   * UC26: Film Lab Owner giao scan (ảnh xem trước + link file gốc), đơn sang {@code
+   * READY_FOR_HANDOVER}; before/after ghi {@code status}, after thêm số cuộn và số ảnh đã giao.
+   */
+  ORDER_SCANS_DELIVERED
 }
