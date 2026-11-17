@@ -18,6 +18,11 @@ public enum ErrorCode {
   REQUEST_NOT_SUPPORTED(HttpStatus.METHOD_NOT_ALLOWED, null),
   BUSINESS_RULE_VIOLATION(HttpStatus.UNPROCESSABLE_CONTENT, null),
   INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, null),
+  /**
+   * Xung đột ghi đồng thời (Optimistic Locking, {@code @Version}) mà service không tự đổi sang mã
+   * riêng của domain; {@code GlobalExceptionHandler} dùng mã này.
+   */
+  CONCURRENT_UPDATE_CONFLICT(HttpStatus.CONFLICT, null),
 
   // --- Xác thực / phân quyền ---
   AUTHENTICATION_REQUIRED(HttpStatus.UNAUTHORIZED, null),
@@ -85,6 +90,10 @@ public enum ErrorCode {
   ORDER_FILM_STOCK_INVALID(HttpStatus.UNPROCESSABLE_CONTENT, null),
   /** Phương án chưa hỗ trợ ở giai đoạn này: Express, Parcel Shipping, COD. */
   ORDER_OPTION_NOT_SUPPORTED(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** Đơn không tồn tại hoặc thuộc lab khác (không lộ đơn của lab khác). */
+  ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  /** UC22: thao tác không hợp lệ với trạng thái hiện tại của đơn, hoặc đơn vừa bị người khác đổi. */
+  ORDER_STATUS_CONFLICT(HttpStatus.CONFLICT, null),
 
   // --- payment ---
   PAYMENT_GATEWAY_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, null),

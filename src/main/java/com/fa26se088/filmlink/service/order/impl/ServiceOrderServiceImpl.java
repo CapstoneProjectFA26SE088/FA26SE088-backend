@@ -72,9 +72,9 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
 
   private static final int ORDER_CODE_ATTEMPTS = 5;
   /** Giờ Việt Nam (GMT+7, CR-04): ngày trong mã đơn và thời điểm hiển thị trong thông báo. */
-  private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+  static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
   private static final DateTimeFormatter ORDER_CODE_DATE = DateTimeFormatter.ofPattern("yyMMdd");
-  private static final DateTimeFormatter NOTIFICATION_TIME =
+  static final DateTimeFormatter NOTIFICATION_TIME =
       DateTimeFormatter.ofPattern("HH:mm dd/MM/yyyy");
   private static final String ERRORS = "errors";
   private static final String ROLLS = "rolls";
