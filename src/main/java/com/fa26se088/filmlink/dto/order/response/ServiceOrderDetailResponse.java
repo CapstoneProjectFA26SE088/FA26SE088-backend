@@ -18,6 +18,7 @@ import java.util.List;
  * {@code machineAssignmentConfirmedAt}, thông tin chủ lab).
  *
  * @param lab {@code null} nếu không đọc được lab (không xảy ra với dữ liệu hợp lệ)
+ * @param keepNegativesAtLab {@code true} khi lab giữ âm bản theo yêu cầu thay vì trả phim (UC27)
  * @param payment thông tin thanh toán; hiện luôn {@code null} (chờ contract thanh toán, FA26-157)
  */
 public record ServiceOrderDetailResponse(
@@ -43,6 +44,7 @@ public record ServiceOrderDetailResponse(
     Instant acceptedAt,
     Instant deliveredAt,
     Instant closedAt,
+    boolean keepNegativesAtLab,
     List<FilmRollResponse> rolls,
     List<ProcessingStageRecordResponse> stages,
     List<OrderFilmHandoverResponse> handovers,

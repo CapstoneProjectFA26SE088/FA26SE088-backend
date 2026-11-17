@@ -5,6 +5,7 @@ import com.fa26se088.filmlink.dto.archive.response.ScanFileResponse;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
+import com.fa26se088.filmlink.dto.order.request.RecordFilmReturnRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
@@ -117,4 +118,18 @@ public interface LabServiceOrderService {
    *     {@code ARCHIVE_DELIVERY_INCOMPLETE} (422: cuộn thiếu ảnh hoặc link)
    */
   LabServiceOrderResponse deliverScans(Long ownerAccountId, Long orderId);
+
+  /**
+   * UC27, BR-25: lab trả phim tại lab (1–10 ảnh bằng chứng) hoặc giữ âm bản theo yêu cầu (ảnh
+   * không bắt buộc) cho đơn {@code READY_FOR_HANDOVER} → {@code DELIVERED}.
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404),
+   *     {@code ORDER_STATUS_CONFLICT} (409), {@code VALIDATION_ERROR} (400: số ảnh ngoài 1–10 khi
+   *     trả phim), lỗi {@code STORAGE_*} khi ảnh sai loại / quá dung lượng
+   */
+  LabServiceOrderResponse returnFilm(
+      Long ownerAccountId,
+      Long orderId,
+      RecordFilmReturnRequest request,
+      List<MultipartFile> photos);
 }

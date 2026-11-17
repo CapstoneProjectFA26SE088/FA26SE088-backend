@@ -11,3 +11,11 @@ filmlink:
   # Job @Scheduled không chạy giữa test.
   scheduling:
     enabled: false
+
+# Mỗi Spring test context giữ một connection pool riêng; pool mặc định 10 làm PostgreSQL hết kết
+# nối ("too many clients already") khi số context tăng.
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 1

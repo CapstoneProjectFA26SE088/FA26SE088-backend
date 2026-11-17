@@ -30,8 +30,8 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * UC20, UC72, UC25: Photographer báo giá, tạo Service Order, trả lời thay đổi lịch và theo dõi đơn
- * của mình. {@code
+ * UC20, UC72, UC25, UC28: Photographer báo giá, tạo Service Order, trả lời thay đổi lịch, theo dõi
+ * đơn của mình và xác nhận đã nhận. {@code
  * hasRole('PHOTOGRAPHER')} gồm cả PHOTOGRAPHY_EXPERT (BR-05, {@code RoleHierarchy}).
  */
 @RestController
@@ -104,5 +104,17 @@ public class ServiceOrderController {
       @PathVariable Long changeId,
       @Valid @RequestBody AnswerScheduleChangeRequest request) {
     serviceOrderService.answerScheduleChange(account.id(), id, changeId, request);
+  }
+
+  @PostMapping("/{id}/confirm-receipt")
+  @Operation(
+      summary = "Xác nhận đã nhận phim / đồng ý lab giữ âm bản: DELIVERED → CLOSED (UC28)",
+      description =
+          "Không có body. Đơn không tồn tại hoặc của người khác → 404 ORDER_NOT_FOUND; đơn không"
+              + " DELIVERED (kể cả xác nhận lần hai) → 409 ORDER_STATUS_CONFLICT. Trả chi tiết đơn"
+              + " (có deliveredAt, closedAt).")
+  public ServiceOrderDetailResponse confirmReceipt(
+      @AuthenticationPrincipal AuthenticatedAccount account, @PathVariable Long id) {
+    return serviceOrderService.confirmReceipt(account.id(), id);
   }
 }

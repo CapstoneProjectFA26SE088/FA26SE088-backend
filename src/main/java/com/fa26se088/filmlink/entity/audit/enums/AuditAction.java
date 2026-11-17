@@ -79,5 +79,14 @@ public enum AuditAction {
    * UC26: Film Lab Owner giao scan (ảnh xem trước + link file gốc), đơn sang {@code
    * READY_FOR_HANDOVER}; before/after ghi {@code status}, after thêm số cuộn và số ảnh đã giao.
    */
-  ORDER_SCANS_DELIVERED
+  ORDER_SCANS_DELIVERED,
+
+  /**
+   * UC27: Film Lab Owner trả phim tại lab hoặc giữ âm bản theo yêu cầu, đơn sang {@code
+   * DELIVERED}; before/after ghi {@code status}, after thêm {@code keepNegativesAtLab}.
+   */
+  ORDER_FILM_RETURNED,
+
+  /** UC28: Photographer xác nhận đã nhận, đơn sang {@code CLOSED}; before/after ghi {@code status}. */
+  ORDER_CLOSED
 }

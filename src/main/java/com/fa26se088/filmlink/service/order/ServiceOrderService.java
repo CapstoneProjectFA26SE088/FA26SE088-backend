@@ -49,4 +49,14 @@ public interface ServiceOrderService {
    *     đơn không tồn tại hoặc không thuộc Photographer
    */
   ServiceOrderDetailResponse getMyOrder(Long photographerAccountId, Long orderId);
+
+  /**
+   * UC28: Photographer xác nhận đã nhận phim (hoặc đồng ý lab giữ âm bản) của đơn {@code
+   * DELIVERED} → {@code CLOSED}.
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404) khi
+   *     đơn không tồn tại hoặc không thuộc Photographer, {@code ORDER_STATUS_CONFLICT} (409) khi đơn
+   *     không ở {@code DELIVERED}
+   */
+  ServiceOrderDetailResponse confirmReceipt(Long photographerAccountId, Long orderId);
 }

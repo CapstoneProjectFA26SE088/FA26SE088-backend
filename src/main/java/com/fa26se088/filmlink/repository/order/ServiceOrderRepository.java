@@ -37,6 +37,17 @@ public interface ServiceOrderRepository extends JpaRepository<ServiceOrder, Long
   /** UC72: đơn {@code id} chỉ khi thuộc Photographer {@code photographerAccountId}. */
   Optional<ServiceOrder> findByIdAndPhotographerAccountId(Long id, Long photographerAccountId);
 
+  /**
+   * UC28: {@code SELECT ... FOR UPDATE} trên dòng đơn của Photographer. Tuần tự hoá xác nhận đã
+   * nhận với các thao tác khác trên cùng đơn (ví dụ hai lần bấm xác nhận cùng lúc).
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select o from ServiceOrder o where o.id = :id"
+          + " and o.photographerAccountId = :photographerAccountId")
+  Optional<ServiceOrder> findByIdAndPhotographerAccountIdForUpdate(
+      @Param("id") Long id, @Param("photographerAccountId") Long photographerAccountId);
+
   /** UC25: đơn của Photographer, mọi trạng thái. */
   Page<ServiceOrder> findByPhotographerAccountId(Long photographerAccountId, Pageable pageable);
 

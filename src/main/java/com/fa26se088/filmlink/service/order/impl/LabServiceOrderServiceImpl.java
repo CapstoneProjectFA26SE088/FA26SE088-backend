@@ -16,6 +16,7 @@ import com.fa26se088.filmlink.dto.machine.RollGroup;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollReceiptRequest;
+import com.fa26se088.filmlink.dto.order.request.RecordFilmReturnRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
@@ -1021,6 +1022,143 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
                 + previewCount
                 + " ảnh xem trước kèm link file gốc. Xem trong Kho phim số (Digital Film Archive).",
             null));
+  }
+
+  /**
+   * UC27: Film Lab Owner trả phim hoặc giữ âm bản theo yêu cầu của Photographer.
+   *
+   * <ul>
+   *   <li>CR-14: đơn của lab khác → 404 {@code ORDER_NOT_FOUND}. Đọc đơn bằng {@code SELECT ... FOR
+   *       UPDATE} rồi mới kiểm trạng thái: chỉ {@code READY_FOR_HANDOVER}; khác (kể cả trả phim lần
+   *       hai) → 409 {@code ORDER_STATUS_CONFLICT}.
+   *   <li>Trả phim tại lab ({@code keepNegativesAtLab = false}), BR-25: 1–10 ảnh bằng chứng, ngoài
+   *       khoảng → 400 {@code VALIDATION_ERROR}. Bàn giao ghi qua {@link FilmHandoverService}
+   *       ({@code COLLECTED_AT_LAB}, {@code roll_count} = số cuộn {@code RECEIVED}, người thực
+   *       hiện = chủ lab). Ảnh chỉ được upload sau khi mọi rule đã qua.
+   *   <li>Lab giữ âm bản ({@code keepNegativesAtLab = true}): không có bàn giao vật lý nên
+   *       <b>không</b> ghi {@code film_handovers}; ảnh không bắt buộc, nếu có gửi thì bị bỏ qua
+   *       (không upload, không lưu).
+   *   <li>Gửi phim về bằng vận chuyển là Later (không có lựa chọn trong body).
+   *   <li>{@code delivered_at = now}, {@code keep_negatives_at_lab} theo body, trạng thái → {@code
+   *       DELIVERED}.
+   *   <li>UC04: báo Photographer đã trả phim / lab giữ âm bản, nhắc xác nhận đã nhận (UC28). BR-32:
+   *       audit {@code ORDER_FILM_RETURNED}.
+   * </ul>
+   */
+  @Override
+  @Transactional
+  public LabServiceOrderResponse returnFilm(
+      Long ownerAccountId,
+      Long orderId,
+      RecordFilmReturnRequest request,
+      List<MultipartFile> photos) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndFilmLabIdForUpdate(orderId, lab.getId())
+            .orElseThrow(LabServiceOrderServiceImpl::orderNotFound);
+    final ServiceOrderStatus before = order.getStatus();
+    if (before != ServiceOrderStatus.READY_FOR_HANDOVER) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Chỉ trả phim được với đơn đã giao scan, đang chờ bàn giao; đơn "
+              + order.getOrderCode()
+              + " đang ở trạng thái "
+              + before.name()
+              + ".");
+    }
+
+    boolean keepNegatives = Boolean.TRUE.equals(request.keepNegativesAtLab());
+    List<MultipartFile> photoList = photos == null ? List.of() : photos;
+    if (!keepNegatives
+        && (photoList.size() < MIN_HANDOVER_PHOTOS || photoList.size() > MAX_HANDOVER_PHOTOS)) {
+      throw new BusinessException(
+          ErrorCode.VALIDATION_ERROR,
+          "Cần "
+              + MIN_HANDOVER_PHOTOS
+              + "–"
+              + MAX_HANDOVER_PHOTOS
+              + " ảnh bằng chứng khi trả phim; đã gửi "
+              + photoList.size()
+              + ".",
+          Map.of("field", "photos", "min", MIN_HANDOVER_PHOTOS, "max", MAX_HANDOVER_PHOTOS));
+    }
+
+    long receivedCount =
+        filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId()).stream()
+            .filter(roll -> roll.getStatus() == FilmRollStatus.RECEIVED)
+            .count();
+    order.setDeliveredAt(clock.instant());
+    order.setKeepNegativesAtLab(keepNegatives);
+    order.setStatus(ServiceOrderStatus.DELIVERED);
+    try {
+      order = serviceOrderRepository.saveAndFlush(order);
+    } catch (OptimisticLockingFailureException ex) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
+    }
+
+    if (!keepNegatives) {
+      // BR-25: upload ảnh và ghi bàn giao sau khi mọi rule đã qua; rollback thì file bị xoá.
+      filmHandoverService.record(
+          new RecordFilmHandoverRequest(
+              order.getId(),
+              null,
+              HandoverPoint.COLLECTED_AT_LAB,
+              (int) receivedCount,
+              request.note(),
+              ownerAccountId,
+              null,
+              photoList));
+    }
+
+    // TODO(FA26-157): đơn PAY_AT_LAB — ghi nhận lab đã thu tiền khi contract thanh toán lên dev
+
+    Map<String, Object> auditAfter = new LinkedHashMap<>();
+    auditAfter.put("status", order.getStatus().name());
+    auditAfter.put("keepNegativesAtLab", keepNegatives);
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ORDER_FILM_RETURNED,
+            AuditTargetType.SERVICE_ORDER,
+            order.getId(),
+            null,
+            Map.of("status", before.name()),
+            auditAfter));
+    notifyPhotographerFilmReturned(lab, order, receivedCount);
+    return toLabResponse(order);
+  }
+
+  /** UC27, UC04: báo Photographer đã trả phim / lab giữ âm bản, nhắc xác nhận (gửi sau commit). */
+  private void notifyPhotographerFilmReturned(FilmLab lab, ServiceOrder order, long rollCount) {
+    String title;
+    String body;
+    if (order.isKeepNegativesAtLab()) {
+      title = "Lab đã lưu giữ âm bản của đơn " + order.getOrderCode();
+      body =
+          "Film Lab "
+              + lab.getLabName()
+              + " đã lưu giữ âm bản "
+              + rollCount
+              + " cuộn phim của đơn "
+              + order.getOrderCode()
+              + " tại lab theo yêu cầu của bạn.";
+    } else {
+      title = "Đơn " + order.getOrderCode() + " đã trả phim";
+      body =
+          "Film Lab "
+              + lab.getLabName()
+              + " đã trả "
+              + rollCount
+              + " cuộn phim của đơn "
+              + order.getOrderCode()
+              + " tại lab.";
+    }
+    body += " Vui lòng xác nhận đã nhận trong mục đơn hàng để hoàn tất đơn.";
+    eventPublisher.publishEvent(
+        new NotificationEvent(
+            order.getPhotographerAccountId(), NotificationType.ORDER_STATUS, title, body, null));
   }
 
   private static BusinessException orderNotFound() {

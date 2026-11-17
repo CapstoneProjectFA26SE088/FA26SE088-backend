@@ -17,6 +17,9 @@ import java.util.List;
  * <p>{@code promisedReturnAt}, {@code machineAssignmentConfirmedAt} có giá trị sau khi lab xác
  * nhận ngày hẹn trả (UC69); {@code stages} là timeline công đoạn (BR-07), cũ nhất trước.
  *
+ * <p>{@code deliveredAt}, {@code keepNegativesAtLab} có giá trị sau khi lab trả phim / giữ âm bản
+ * (UC27); {@code closedAt} sau khi Photographer xác nhận đã nhận (UC28).
+ *
  * <p>Chưa có shipment, thanh toán (task sau).
  */
 public record LabServiceOrderResponse(
@@ -41,6 +44,9 @@ public record LabServiceOrderResponse(
     Instant machineAssignmentConfirmedAt,
     Instant labResponseDueAt,
     Instant acceptedAt,
+    Instant deliveredAt,
+    Instant closedAt,
+    boolean keepNegativesAtLab,
     OrderPhotographerResponse photographer,
     List<FilmRollResponse> rolls,
     List<FilmHandoverResponse> handovers,
