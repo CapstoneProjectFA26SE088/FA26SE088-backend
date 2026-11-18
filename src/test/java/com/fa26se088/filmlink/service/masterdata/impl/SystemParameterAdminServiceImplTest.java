@@ -3,7 +3,9 @@ package com.fa26se088.filmlink.service.masterdata.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
@@ -216,6 +218,54 @@ class SystemParameterAdminServiceImplTest {
 
     assertThat(response.value()).isEqualTo("10");
     verify(systemParameterRepository).saveAndFlush(level2);
+  }
+
+  @Test
+  @DisplayName("updateParameter EMBEDDING_MODEL bị chặn 422 SYSTEM_PARAMETER_READ_ONLY, không lưu, không audit")
+  void updateParameter_embeddingModel_isReadOnly() {
+    SystemParameter entity =
+        createParam(SystemParameterKey.EMBEDDING_MODEL, "text-embedding-3-small", ParameterValueType.STRING, 0);
+    when(systemParameterRepository.findByKey(SystemParameterKey.EMBEDDING_MODEL))
+        .thenReturn(Optional.of(entity));
+
+    UpdateSystemParameterRequest request = new UpdateSystemParameterRequest("text-embedding-3-large", 0);
+
+    assertThatThrownBy(
+            () -> adminService.updateParameter(SystemParameterKey.EMBEDDING_MODEL, request, 99L))
+        .isInstanceOf(BusinessException.class)
+        .hasFieldOrPropertyWithValue("errorCode", ErrorCode.SYSTEM_PARAMETER_READ_ONLY)
+        .hasMessageContaining("re-embed");
+    assertThat(ErrorCode.SYSTEM_PARAMETER_READ_ONLY.getHttpStatus().value()).isEqualTo(422);
+    assertThat(entity.getValue()).isEqualTo("text-embedding-3-small");
+    verify(systemParameterRepository, never())
+        .saveAndFlush(any());
+    verifyNoInteractions(auditLogService);
+  }
+
+  @Test
+  @DisplayName("updateParameter CHATBOT_MAX_CITATIONS ngoài 1-3 bị chặn 422 (CHECK chatbot_messages), 3 hợp lệ")
+  void updateParameter_chatbotMaxCitations_mustBeOneToThree() {
+    SystemParameter entity =
+        createParam(SystemParameterKey.CHATBOT_MAX_CITATIONS, "3", ParameterValueType.INTEGER, 0);
+    when(systemParameterRepository.findByKey(SystemParameterKey.CHATBOT_MAX_CITATIONS))
+        .thenReturn(Optional.of(entity));
+
+    for (String invalid : List.of("0", "4")) {
+      assertThatThrownBy(
+              () ->
+                  adminService.updateParameter(
+                      SystemParameterKey.CHATBOT_MAX_CITATIONS,
+                      new UpdateSystemParameterRequest(invalid, 0),
+                      99L))
+          .isInstanceOf(BusinessException.class)
+          .hasFieldOrPropertyWithValue("errorCode", ErrorCode.SYSTEM_PARAMETER_INVALID_VALUE)
+          .hasMessageContaining("chatbot_messages");
+    }
+    verify(systemParameterRepository, never()).saveAndFlush(any());
+
+    adminService.updateParameter(
+        SystemParameterKey.CHATBOT_MAX_CITATIONS, new UpdateSystemParameterRequest("2", 0), 99L);
+    assertThat(entity.getValue()).isEqualTo("2");
   }
 
   private SystemParameter createParam(

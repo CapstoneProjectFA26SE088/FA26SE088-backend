@@ -59,6 +59,16 @@ public class SystemParameterAdminServiceImpl implements SystemParameterAdminServ
       SystemParameterKey key, UpdateSystemParameterRequest request, Long adminAccountId) {
     SystemParameter entity = findEntity(key);
 
+    // 0. EMBEDDING_MODEL không sửa qua UI: đổi model mà không re-embed thì chatbot không tìm được
+    //    chunk nào (chunk lưu theo model) và query/index chỉ khớp 1536 chiều.
+    if (key == SystemParameterKey.EMBEDDING_MODEL) {
+      throw new BusinessException(
+          ErrorCode.SYSTEM_PARAMETER_READ_ONLY,
+          "Không được sửa EMBEDDING_MODEL trên màn hình tham số. Đổi model embedding phải re-embed"
+              + " toàn bộ Knowledge Base theo quy trình \"Embedding storage\" ở header cụm 5"
+              + " (thêm dòng chunk và index mới cho model mới, có migration).");
+    }
+
     // 1. Kiểm tra Optimistic Locking
     if (!entity.getVersion().equals(request.version())) {
       throw new BusinessException(
@@ -136,6 +146,13 @@ public class SystemParameterAdminServiceImpl implements SystemParameterAdminServ
             "Số ngày áp dụng chế tài phải là số nguyên dương (> 0).");
       }
       validateSanctionLevelsOrder(key, intVal);
+    } else if (key == SystemParameterKey.CHATBOT_MAX_CITATIONS) {
+      if (intVal < 1 || intVal > 3) {
+        throw new BusinessException(
+            ErrorCode.SYSTEM_PARAMETER_INVALID_VALUE,
+            "Số trích dẫn tối đa của Chatbot phải từ 1 đến 3: CHECK ck_chatbot_messages_citations của"
+                + " bảng chatbot_messages chỉ cho phép tối đa 3 trích dẫn mỗi câu trả lời (UC19).");
+      }
     } else if (key == SystemParameterKey.FREE_STORAGE_QUOTA_GB
         || key == SystemParameterKey.CHATBOT_DAILY_QUESTION_QUOTA) {
       if (intVal < 0) {
