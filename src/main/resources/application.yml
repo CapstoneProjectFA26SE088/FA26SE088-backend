@@ -32,6 +32,14 @@ filmlink:
       public-base-url: ${STORAGE_PUBLIC_BASE_URL:http://localhost:${server.port}}
       # Khoá HMAC-SHA256 Base64 >= 256 bit, riêng với JWT_SECRET. Không có giá trị mặc định.
       signing-secret: ${STORAGE_SIGNING_SECRET}
+  # LLM (client/llm, UC19). Key trống thì client "không khả dụng", chatbot trả câu dự phòng: build/test không cần key.
+  # Model embedding không ở đây: đọc tham số hệ thống EMBEDDING_MODEL.
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      chat-model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      timeout: 20s
   # Bật @Scheduled (config/SchedulingConfig). Test đặt false.
   scheduling:
     enabled: true

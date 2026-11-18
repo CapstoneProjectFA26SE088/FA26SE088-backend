@@ -94,5 +94,13 @@ public enum AuditAction {
    * UC60, BR-38: Photographer huỷ đơn trước khi lab nhận phim, đơn sang {@code CANCELLED};
    * before/after ghi {@code status}, after thêm {@code cancellationFeeVnd} và {@code reason}.
    */
-  ORDER_CANCELLED
+  ORDER_CANCELLED,
+
+  // --- ai ---
+  /**
+   * UC19, BR-29: Admin lập chỉ mục lại Knowledge Base từ các Expert Article đã duyệt. Target type
+   * {@code KNOWLEDGE_BASE_ENTRY}, targetId = null (batch); after ghi {@code articleCount}, {@code
+   * chunkCount}, {@code embeddingModel}.
+   */
+  KNOWLEDGE_BASE_REINDEXED
 }

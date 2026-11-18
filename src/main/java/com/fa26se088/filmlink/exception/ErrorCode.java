@@ -136,7 +136,18 @@ public enum ErrorCode {
   /** Giá trị tham số hệ thống không hợp lệ hoặc vi phạm ràng buộc miền giá trị / thứ tự (BR-38). */
   SYSTEM_PARAMETER_INVALID_VALUE(HttpStatus.UNPROCESSABLE_CONTENT, null),
   /** Xung đột phiên bản cập nhật tham số hệ thống do có người khác cập nhật trước (Optimistic Locking). */
-  SYSTEM_PARAMETER_CONFLICT(HttpStatus.CONFLICT, null);
+  SYSTEM_PARAMETER_CONFLICT(HttpStatus.CONFLICT, null),
+  /**
+   * Tham số không sửa được qua màn hình tham số (ví dụ {@code EMBEDDING_MODEL}: đổi model phải
+   * re-embed Knowledge Base theo quy trình ở header cụm 5).
+   */
+  SYSTEM_PARAMETER_READ_ONLY(HttpStatus.UNPROCESSABLE_CONTENT, null),
+
+  // --- ai ---
+  /** LLM API chưa cấu hình hoặc lỗi, với thao tác không có câu trả lời dự phòng (reindex). */
+  AI_PROVIDER_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, null),
+  /** UC19: session chatbot không tồn tại hoặc của người khác (không lộ session của người khác). */
+  AI_CHAT_SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, null);
 
   private final HttpStatus httpStatus;
   private final String messageCode;
