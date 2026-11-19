@@ -1,5 +1,6 @@
 package com.fa26se088.filmlink.service.machine;
 
+import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
 import java.util.List;
 
@@ -17,4 +18,14 @@ public interface MachineService {
    * @return danh sách máy của lab sắp xếp theo ID tăng dần
    */
   List<MachineResponse> getMyMachines(Long ownerAccountId);
+
+  /**
+   * Khai báo máy tráng (PROCESSOR) hoặc máy scan (SCANNER) mới cho lab của chủ tài khoản đang đăng
+   * nhập (UC68, BR-57, BR-58).
+   *
+   * @param ownerAccountId ID tài khoản FILM_LAB_OWNER đang đăng nhập
+   * @param request thông tin cấu hình máy, quy trình, khổ phim và giờ hoạt động
+   * @return thông tin máy vừa tạo ở trạng thái ACTIVE kèm công suất tính toán theo ngày
+   */
+  MachineResponse createMachine(Long ownerAccountId, CreateMachineRequest request);
 }

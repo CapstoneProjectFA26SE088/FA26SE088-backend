@@ -1,8 +1,10 @@
 package com.fa26se088.filmlink.controller.machine;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -11,18 +13,28 @@ import com.fa26se088.filmlink.entity.account.UserAccount;
 import com.fa26se088.filmlink.entity.account.enums.LabApplicationStatus;
 import com.fa26se088.filmlink.entity.account.enums.UserAccountRole;
 import com.fa26se088.filmlink.entity.account.enums.UserAccountStatus;
+import com.fa26se088.filmlink.entity.audit.AuditLog;
+import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
+import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
 import com.fa26se088.filmlink.entity.machine.Machine;
 import com.fa26se088.filmlink.entity.machine.MachineWorkingHour;
 import com.fa26se088.filmlink.entity.machine.enums.MachineStatus;
 import com.fa26se088.filmlink.entity.machine.enums.MachineType;
+import com.fa26se088.filmlink.entity.masterdata.enums.CatalogStatus;
 import com.fa26se088.filmlink.repository.account.LabRegistrationApplicationRepository;
 import com.fa26se088.filmlink.repository.account.UserAccountRepository;
+import com.fa26se088.filmlink.repository.audit.AuditLogRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabRepository;
 import com.fa26se088.filmlink.repository.machine.MachineRepository;
+import com.fa26se088.filmlink.repository.masterdata.FilmFormatRepository;
+import com.fa26se088.filmlink.repository.masterdata.FilmProcessRepository;
 import com.fa26se088.filmlink.security.JwtTokenProvider;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalTime;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -30,7 +42,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -49,26 +63,53 @@ class MachineControllerIntegrationTest {
   @Autowired private LabRegistrationApplicationRepository applicationRepository;
   @Autowired private FilmLabRepository filmLabRepository;
   @Autowired private MachineRepository machineRepository;
+  @Autowired private FilmProcessRepository filmProcessRepository;
+  @Autowired private FilmFormatRepository filmFormatRepository;
+  @Autowired private AuditLogRepository auditLogRepository;
   @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private PasswordEncoder passwordEncoder;
+
+  private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
   private String ownerToken;
   private String photographerToken;
   private Long labId;
+  private Long activeProcessId;
+  private Long activeFormatId;
 
   @BeforeEach
   void setUp() {
     cleanupTestData();
 
-    UserAccount owner = new UserAccount();
-    owner.setEmail(OWNER_EMAIL);
-    owner.setFullName("Machine Lab Owner");
-    owner.setPasswordHash(passwordEncoder.encode("Password123@"));
-    owner.setRole(UserAccountRole.FILM_LAB_OWNER);
-    owner.setStatus(UserAccountStatus.ACTIVE);
-    owner.setTermsAcceptedAt(Instant.now());
-    owner.setEmailVerifiedAt(Instant.now());
-    owner = userAccountRepository.save(owner);
+    activeProcessId =
+        filmProcessRepository.findAll().stream()
+            .filter(p -> p.getStatus() == CatalogStatus.ACTIVE)
+            .findFirst()
+            .orElseThrow()
+            .getId();
+
+    activeFormatId =
+        filmFormatRepository.findAll().stream()
+            .filter(f -> f.getStatus() == CatalogStatus.ACTIVE)
+            .findFirst()
+            .orElseThrow()
+            .getId();
+
+    UserAccount owner =
+        userAccountRepository
+            .findByEmail(OWNER_EMAIL)
+            .orElseGet(
+                () -> {
+                  UserAccount u = new UserAccount();
+                  u.setEmail(OWNER_EMAIL);
+                  u.setFullName("Machine Lab Owner");
+                  u.setPasswordHash(passwordEncoder.encode("Password123@"));
+                  u.setRole(UserAccountRole.FILM_LAB_OWNER);
+                  u.setStatus(UserAccountStatus.ACTIVE);
+                  u.setTermsAcceptedAt(Instant.now());
+                  u.setEmailVerifiedAt(Instant.now());
+                  return userAccountRepository.save(u);
+                });
     ownerToken =
         jwtTokenProvider.generateAccessToken(owner.getId(), owner.getEmail(), owner.getRole());
 
@@ -91,29 +132,43 @@ class MachineControllerIntegrationTest {
         jwtTokenProvider.generateAccessToken(
             photographer.getId(), photographer.getEmail(), photographer.getRole());
 
-    LabRegistrationApplication app = new LabRegistrationApplication();
-    app.setApplicationCode("LA261119MCH001");
-    app.setLabName("Machine Test Film Lab");
-    app.setTaxCode("0399887766");
-    app.setAddressLine("100 Pasteur");
-    app.setDistrict("Quan 1");
-    app.setProvince("TP Ho Chi Minh");
-    app.setContactEmail(OWNER_EMAIL);
-    app.setContactPhone("0909112233");
-    app.setStatus(LabApplicationStatus.APPROVED);
-    app.setReviewedAt(Instant.now());
-    app = applicationRepository.save(app);
+    LabRegistrationApplication app =
+        applicationRepository
+            .findByApplicationCode("LA261119MCH001")
+            .orElseGet(
+                () -> {
+                  LabRegistrationApplication a = new LabRegistrationApplication();
+                  a.setApplicationCode("LA261119MCH001");
+                  a.setLabName("Machine Test Film Lab");
+                  a.setTaxCode("0399887766");
+                  a.setAddressLine("100 Pasteur");
+                  a.setDistrict("Quan 1");
+                  a.setProvince("TP Ho Chi Minh");
+                  a.setContactEmail(OWNER_EMAIL);
+                  a.setContactPhone("0909112233");
+                  a.setStatus(LabApplicationStatus.APPROVED);
+                  a.setReviewedAt(Instant.now());
+                  return applicationRepository.save(a);
+                });
 
-    FilmLab lab = new FilmLab();
-    lab.setOwnerAccountId(owner.getId());
-    lab.setLabRegistrationApplicationId(app.getId());
-    lab.setLabName("Machine Test Film Lab");
-    lab.setAddressLine("100 Pasteur");
-    lab.setDistrict("Quan 1");
-    lab.setProvince("TP Ho Chi Minh");
-    lab.setContactEmail(OWNER_EMAIL);
-    lab.setContactPhone("0909112233");
-    lab = filmLabRepository.save(lab);
+    Long ownerId = owner.getId();
+    Long appId = app.getId();
+    FilmLab lab =
+        filmLabRepository
+            .findByOwnerAccountId(ownerId)
+            .orElseGet(
+                () -> {
+                  FilmLab l = new FilmLab();
+                  l.setOwnerAccountId(ownerId);
+                  l.setLabRegistrationApplicationId(appId);
+                  l.setLabName("Machine Test Film Lab");
+                  l.setAddressLine("100 Pasteur");
+                  l.setDistrict("Quan 1");
+                  l.setProvince("TP Ho Chi Minh");
+                  l.setContactEmail(OWNER_EMAIL);
+                  l.setContactPhone("0909112233");
+                  return filmLabRepository.save(l);
+                });
     labId = lab.getId();
 
     Machine p1 = new Machine();
@@ -144,18 +199,6 @@ class MachineControllerIntegrationTest {
 
   private void cleanupTestData() {
     machineRepository.deleteAll();
-    userAccountRepository
-        .findByEmail(OWNER_EMAIL)
-        .ifPresent(
-            owner -> {
-              filmLabRepository
-                  .findByOwnerAccountId(owner.getId())
-                  .ifPresent(filmLabRepository::delete);
-              userAccountRepository.delete(owner);
-            });
-    applicationRepository
-        .findByApplicationCode("LA261119MCH001")
-        .ifPresent(applicationRepository::delete);
   }
 
   private void addEightHourWorkDays(Machine machine) {
@@ -197,6 +240,93 @@ class MachineControllerIntegrationTest {
         .andExpect(jsonPath("$[1].dailyCapacityRolls", is(72)))
         .andExpect(jsonPath("$[1].workingHours[0].dailyCapacityRolls", is(72)))
         .andExpect(jsonPath("$[1].workingHours[6].dailyCapacityRolls", is(0)));
+  }
+
+  @Test
+  @DisplayName(
+      "TC-F06-01 & TC-SM04-01: Film Lab Owner tạo máy mới P2 (PROCESSOR) -> 201 Created, ACTIVE, tính công suất ngày = 208, ghi audit")
+  void createMachine_asLabOwner_processor_returns201AndRecordsAudit() throws Exception {
+    String requestBody =
+        """
+        {
+          "machineCode": "P2",
+          "modelName": "Jobo CPP-3",
+          "machineType": "PROCESSOR",
+          "capacityPerHour": 26,
+          "filmProcessIds": [%d],
+          "filmFormatIds": [%d],
+          "workingHours": [
+            {"dayOfWeek": 1, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 2, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 3, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 4, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 5, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 6, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 7, "closed": true}
+          ]
+        }
+        """
+            .formatted(activeProcessId, activeFormatId);
+
+    String responseBody =
+        mockMvc
+            .perform(
+                post(API_PATH)
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").isNumber())
+            .andExpect(jsonPath("$.machineCode", is("P2")))
+            .andExpect(jsonPath("$.modelName", is("Jobo CPP-3")))
+            .andExpect(jsonPath("$.machineType", is("PROCESSOR")))
+            .andExpect(jsonPath("$.status", is("ACTIVE")))
+            .andExpect(jsonPath("$.capacityPerHour", is(26)))
+            .andExpect(jsonPath("$.dailyCapacityRolls", is(208)))
+            .andExpect(jsonPath("$.workingHours", hasSize(7)))
+            .andReturn()
+            .getResponse()
+            .getContentAsString(StandardCharsets.UTF_8);
+
+    Long createdMachineId = objectMapper.readTree(responseBody).get("id").asLong();
+
+    List<AuditLog> logs =
+        auditLogRepository
+            .findAll(
+                AuditLogRepository.byTarget(AuditTargetType.MACHINE, createdMachineId),
+                PageRequest.of(0, 10))
+            .getContent();
+    assertThat(logs).isNotEmpty();
+    assertThat(logs.getFirst().getAction()).isEqualTo(AuditAction.MACHINE_CREATED);
+  }
+
+  @Test
+  @DisplayName("Tạo máy trùng machineCode (không phân biệt hoa thường) -> 409 Conflict")
+  void createMachine_duplicateCode_returns409() throws Exception {
+    String requestBody =
+        """
+        {
+          "machineCode": "p1",
+          "modelName": "Duplicate P1",
+          "machineType": "PROCESSOR",
+          "capacityPerHour": 26,
+          "filmProcessIds": [%d],
+          "filmFormatIds": [%d],
+          "workingHours": [
+            {"dayOfWeek": 1, "closed": false, "opensAt": "08:00", "closesAt": "16:00"}
+          ]
+        }
+        """
+            .formatted(activeProcessId, activeFormatId);
+
+    mockMvc
+        .perform(
+            post(API_PATH)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.errorCode", is("MACHINE_CODE_DUPLICATE")));
   }
 
   @Test

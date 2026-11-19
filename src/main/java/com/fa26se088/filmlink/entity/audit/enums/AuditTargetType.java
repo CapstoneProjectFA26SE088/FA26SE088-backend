@@ -24,6 +24,10 @@ public enum AuditTargetType {
   /** UC13: gói dịch vụ trong bảng giá của lab. */
   SERVICE_PACKAGE,
 
+  // --- machine (UC68) ---
+  /** UC68: thiết bị máy tráng / máy scan của lab. */
+  MACHINE,
+
   // --- order ---
   /** UC20: đơn dịch vụ tráng / scan. */
   SERVICE_ORDER

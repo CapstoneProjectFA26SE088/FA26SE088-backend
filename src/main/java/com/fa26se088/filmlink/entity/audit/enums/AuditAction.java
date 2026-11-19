@@ -45,6 +45,13 @@ public enum AuditAction {
   /** UC13: Film Lab Owner mở bán / ngừng bán Service Package; before/after ghi {@code status}. */
   LAB_SERVICE_PACKAGE_STATUS_CHANGED,
 
+  // --- machine (UC68) ---
+  /** UC68: Film Lab Owner khai báo máy tráng / máy scan mới; after ghi mã máy, loại máy, trạng thái. */
+  MACHINE_CREATED,
+
+  /** UC68: Film Lab Owner cập nhật cấu hình máy tráng / máy scan. */
+  MACHINE_UPDATED,
+
   // --- order ---
   /** UC20: Photographer tạo Service Order; after ghi mã đơn, lab, trạng thái, tổng tạm tính. */
   ORDER_CREATED,
