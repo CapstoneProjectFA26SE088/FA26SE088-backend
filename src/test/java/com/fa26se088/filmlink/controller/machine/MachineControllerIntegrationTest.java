@@ -3,6 +3,11 @@ package com.fa26se088.filmlink.controller.machine;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.nullValue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -20,22 +25,39 @@ import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
 import com.fa26se088.filmlink.entity.machine.Machine;
 import com.fa26se088.filmlink.entity.machine.MachineWorkingHour;
+import com.fa26se088.filmlink.entity.machine.OrderCapacityAllocation;
+import com.fa26se088.filmlink.entity.machine.ScheduleChange;
 import com.fa26se088.filmlink.entity.machine.enums.MachineStatus;
 import com.fa26se088.filmlink.entity.machine.enums.MachineType;
+import com.fa26se088.filmlink.entity.machine.enums.ScheduleChangeStep;
+import com.fa26se088.filmlink.entity.machine.enums.ServiceTier;
+import com.fa26se088.filmlink.entity.masterdata.FilmFormat;
+import com.fa26se088.filmlink.entity.masterdata.FilmProcess;
 import com.fa26se088.filmlink.entity.masterdata.enums.CatalogStatus;
+import com.fa26se088.filmlink.entity.notification.enums.NotificationType;
 import com.fa26se088.filmlink.repository.account.LabRegistrationApplicationRepository;
 import com.fa26se088.filmlink.repository.account.UserAccountRepository;
 import com.fa26se088.filmlink.repository.audit.AuditLogRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabRepository;
+import com.fa26se088.filmlink.repository.machine.MachineIncidentRepository;
 import com.fa26se088.filmlink.repository.machine.MachineRepository;
+import com.fa26se088.filmlink.repository.machine.OrderCapacityAllocationRepository;
+import com.fa26se088.filmlink.repository.machine.ScheduleChangeRepository;
 import com.fa26se088.filmlink.repository.masterdata.FilmFormatRepository;
 import com.fa26se088.filmlink.repository.masterdata.FilmProcessRepository;
 import com.fa26se088.filmlink.security.JwtTokenProvider;
+import com.fa26se088.filmlink.service.machine.impl.CapacitySchedulingEngine;
+import com.fa26se088.filmlink.service.notification.NotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
+import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.Set;
+import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -46,8 +68,10 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
@@ -64,18 +88,26 @@ class MachineControllerIntegrationTest {
   @Autowired private LabRegistrationApplicationRepository applicationRepository;
   @Autowired private FilmLabRepository filmLabRepository;
   @Autowired private MachineRepository machineRepository;
+  @Autowired private MachineIncidentRepository machineIncidentRepository;
+  @Autowired private ScheduleChangeRepository scheduleChangeRepository;
+  @Autowired private OrderCapacityAllocationRepository orderCapacityAllocationRepository;
   @Autowired private FilmProcessRepository filmProcessRepository;
   @Autowired private FilmFormatRepository filmFormatRepository;
   @Autowired private AuditLogRepository auditLogRepository;
   @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private PasswordEncoder passwordEncoder;
+  @Autowired private JdbcTemplate jdbcTemplate;
+
+  @MockitoBean private NotificationService notificationService;
 
   private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
 
   private String ownerToken;
   private String photographerToken;
+  private Long photographerId;
   private Long labId;
   private Long savedP1Id;
+  private Long savedS1Id;
   private Long activeProcessId;
   private Long activeFormatId;
 
@@ -130,6 +162,7 @@ class MachineControllerIntegrationTest {
                   u.setEmailVerifiedAt(Instant.now());
                   return userAccountRepository.save(u);
                 });
+    photographerId = photographer.getId();
     photographerToken =
         jwtTokenProvider.generateAccessToken(
             photographer.getId(), photographer.getEmail(), photographer.getRole());
@@ -191,7 +224,7 @@ class MachineControllerIntegrationTest {
     s1.setCapacityPerHour(327);
     s1.setStatus(MachineStatus.ACTIVE);
     addEightHourWorkDays(s1);
-    machineRepository.save(s1);
+    savedS1Id = machineRepository.save(s1).getId();
   }
 
   @AfterEach
@@ -200,6 +233,25 @@ class MachineControllerIntegrationTest {
   }
 
   private void cleanupTestData() {
+    scheduleChangeRepository.deleteAll();
+    orderCapacityAllocationRepository.deleteAll();
+    Long targetLabId = labId;
+    if (targetLabId == null) {
+      targetLabId =
+          userAccountRepository
+              .findByEmail(OWNER_EMAIL)
+              .flatMap(owner -> filmLabRepository.findByOwnerAccountId(owner.getId()))
+              .map(FilmLab::getId)
+              .orElse(null);
+    }
+    if (targetLabId != null) {
+      jdbcTemplate.update(
+          "DELETE FROM film_rolls WHERE service_order_id IN"
+              + " (SELECT id FROM service_orders WHERE film_lab_id = ?)",
+          targetLabId);
+      jdbcTemplate.update("DELETE FROM service_orders WHERE film_lab_id = ?", targetLabId);
+    }
+    machineIncidentRepository.deleteAll();
     machineRepository.deleteAll();
   }
 
@@ -467,5 +519,214 @@ class MachineControllerIntegrationTest {
     mockMvc
         .perform(get(API_PATH).header(HttpHeaders.AUTHORIZATION, "Bearer " + photographerToken))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  @DisplayName(
+      "TC-F14-01 & TC-SM04-02: Báo cáo sự cố P1 hỏng ngày Thứ 4 -> 201 Created, máy chuyển MAINTENANCE, tái xếp lịch đơn IN_PROCESSING sang Thứ 5, cập nhật promised_return_at sang 12:00 Thứ 6 và ghi audit")
+  void tcF1401_reportIncident_withExpectedAvailableAt_maintenanceAndReschedulesOrders()
+      throws Exception {
+    FilmLab lab = filmLabRepository.findById(labId).orElseThrow();
+    lab.setQcBufferHours((short) 4);
+    lab.setExpressDailyCapPercent((short) 25);
+    filmLabRepository.saveAndFlush(lab);
+
+    FilmProcess activeProcess = filmProcessRepository.findById(activeProcessId).orElseThrow();
+    FilmFormat activeFormat = filmFormatRepository.findById(activeFormatId).orElseThrow();
+
+    Machine p1 = machineRepository.findById(savedP1Id).orElseThrow();
+    p1.setCapacityPerHour(2);
+    p1.setFilmProcesses(Set.of(activeProcess));
+    p1.setFilmFormats(Set.of(activeFormat));
+    machineRepository.saveAndFlush(p1);
+
+    Machine s1 = machineRepository.findById(savedS1Id).orElseThrow();
+    s1.setCapacityPerHour(72);
+    s1.setFilmFormats(Set.of(activeFormat));
+    machineRepository.saveAndFlush(s1);
+
+    LocalDate monday = LocalDate.of(2026, 11, 16);
+    LocalDate tuesday = monday.plusDays(1);
+    LocalDate wednesday = monday.plusDays(2);
+    LocalDate thursday = monday.plusDays(3);
+    LocalDate friday = monday.plusDays(4);
+
+    Instant receivedAt = vnTime(monday, 10, 0);
+    Instant oldPromisedAt = vnTime(thursday, 12, 0);
+    Instant expectedNewPromisedAt = vnTime(friday, 12, 0);
+
+    // Đơn đã chiếm hết 12 cuộn Standard ngày Thứ 3
+    long busyOrderId = insertInProcessingOrder(receivedAt, vnTime(wednesday, 12, 0));
+    saveAllocation(busyOrderId, tuesday, ServiceTier.STANDARD, (short) 12, receivedAt.minusSeconds(3600));
+
+    // Đơn mục tiêu đang xử lý 3 cuộn vào Thứ 4, hẹn trả 12:00 Thứ 5
+    long targetOrderId = insertInProcessingOrder(receivedAt, oldPromisedAt);
+    saveAllocation(targetOrderId, wednesday, ServiceTier.STANDARD, (short) 3, receivedAt);
+
+    String requestBody =
+        """
+        {
+          "cause": "MACHINE_FAILURE",
+          "description": "Hỏng motor kéo phim máy P1",
+          "unavailableFrom": "%s",
+          "expectedAvailableAt": "%s"
+        }
+        """
+            .formatted(vnTime(wednesday, 8, 0), vnTime(wednesday, 16, 0));
+
+    String responseBody =
+        mockMvc
+            .perform(
+                post(API_PATH + "/" + savedP1Id + "/incidents")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(requestBody))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").isNumber())
+            .andExpect(jsonPath("$.machineId", is(savedP1Id.intValue())))
+            .andExpect(jsonPath("$.machineCode", is("P1")))
+            .andExpect(jsonPath("$.cause", is("MACHINE_FAILURE")))
+            .andExpect(jsonPath("$.machineStatusAfter", is("MAINTENANCE")))
+            .andExpect(jsonPath("$.affectedOrderCount", is(1)))
+            .andExpect(jsonPath("$.scheduleChanges", hasSize(1)))
+            .andExpect(jsonPath("$.scheduleChanges[0].serviceOrderId", is((int) targetOrderId)))
+            .andExpect(jsonPath("$.scheduleChanges[0].stepApplied", is("RESCHEDULED")))
+            .andExpect(
+                jsonPath("$.scheduleChanges[0].oldPromisedAt", is(oldPromisedAt.toString())))
+            .andExpect(
+                jsonPath("$.scheduleChanges[0].newPromisedAt", is(expectedNewPromisedAt.toString())))
+            .andExpect(jsonPath("$.scheduleChanges[0].requiresResponse", is(false)))
+            .andExpect(jsonPath("$.scheduleChanges[0].responseDueAt").value(nullValue()))
+            .andReturn()
+            .getResponse()
+            .getContentAsString(StandardCharsets.UTF_8);
+
+    long incidentId = objectMapper.readTree(responseBody).get("id").asLong();
+
+    Machine updatedP1 = machineRepository.findById(savedP1Id).orElseThrow();
+    assertThat(updatedP1.getStatus()).isEqualTo(MachineStatus.MAINTENANCE);
+
+    List<OrderCapacityAllocation> targetAllocations =
+        orderCapacityAllocationRepository.findByServiceOrderIdOrderByWorkDateAsc(targetOrderId);
+    assertThat(targetAllocations).hasSize(1);
+    assertThat(targetAllocations.getFirst().getWorkDate()).isEqualTo(thursday);
+    assertThat(targetAllocations.getFirst().getRollCount()).isEqualTo((short) 3);
+
+    List<ScheduleChange> changes =
+        scheduleChangeRepository.findByMachineIncidentIdOrderByIdAsc(incidentId);
+    assertThat(changes).hasSize(1);
+    assertThat(changes.getFirst().getStepApplied()).isEqualTo(ScheduleChangeStep.RESCHEDULED);
+
+    Timestamp dbPromisedAt =
+        jdbcTemplate.queryForObject(
+            "SELECT promised_return_at FROM service_orders WHERE id = ?",
+            Timestamp.class,
+            targetOrderId);
+    assertThat(dbPromisedAt).isNotNull();
+    assertThat(dbPromisedAt.toInstant()).isEqualTo(expectedNewPromisedAt);
+
+    List<AuditLog> incidentLogs =
+        auditLogRepository
+            .findAll(
+                AuditLogRepository.byTarget(AuditTargetType.MACHINE_INCIDENT, incidentId),
+                PageRequest.of(0, 10))
+            .getContent();
+    assertThat(incidentLogs).isNotEmpty();
+    assertThat(incidentLogs.getFirst().getAction()).isEqualTo(AuditAction.MACHINE_INCIDENT_REPORTED);
+
+    List<AuditLog> orderLogs =
+        auditLogRepository
+            .findAll(
+                AuditLogRepository.byTarget(AuditTargetType.SERVICE_ORDER, targetOrderId),
+                PageRequest.of(0, 10))
+            .getContent();
+    assertThat(orderLogs)
+        .anySatisfy(
+            logEntry ->
+                assertThat(logEntry.getAction())
+                    .isEqualTo(AuditAction.ORDER_PROMISED_DATE_CHANGED));
+
+    verify(notificationService)
+        .notify(
+            eq(photographerId),
+            eq(NotificationType.ORDER_STATUS),
+            contains("đổi ngày hẹn trả"),
+            any(),
+            any());
+  }
+
+  @Test
+  @DisplayName(
+      "Báo cáo sự cố không xác định thời điểm khắc phục (expectedAvailableAt = null) -> 201 Created, máy chuyển DOWN")
+  void reportIncident_withoutExpectedAvailableAt_returns201AndSetsMachineDown() throws Exception {
+    String requestBody =
+        """
+        {
+          "cause": "POWER_OUTAGE",
+          "description": "Mất điện khu vực chưa xác định thời điểm có lại",
+          "unavailableFrom": "2026-11-18T01:00:00Z"
+        }
+        """;
+
+    mockMvc
+        .perform(
+            post(API_PATH + "/" + savedP1Id + "/incidents")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.machineId", is(savedP1Id.intValue())))
+        .andExpect(jsonPath("$.machineStatusAfter", is("DOWN")))
+        .andExpect(jsonPath("$.expectedAvailableAt").value(nullValue()));
+
+    Machine updatedP1 = machineRepository.findById(savedP1Id).orElseThrow();
+    assertThat(updatedP1.getStatus()).isEqualTo(MachineStatus.DOWN);
+  }
+
+  private long insertInProcessingOrder(Instant priceLockedAt, Instant promisedReturnAt) {
+    String code = "ORD-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+    return jdbcTemplate.queryForObject(
+        """
+        INSERT INTO service_orders
+            (order_code, idempotency_key, photographer_account_id, film_lab_id,
+             status, service_tier, film_handover_method, payment_method,
+             estimated_total_vnd, final_total_vnd, price_locked_at, expected_return_at,
+             promised_return_at, machine_assignment_confirmed_at)
+        VALUES (?, ?, ?, ?, 'IN_PROCESSING', 'STANDARD', 'SELF_DROP_OFF', 'PAY_AT_LAB',
+                240000, 240000, ?, ?, ?, ?)
+        RETURNING id
+        """,
+        Long.class,
+        code,
+        UUID.randomUUID(),
+        photographerId,
+        labId,
+        Timestamp.from(priceLockedAt),
+        Timestamp.from(priceLockedAt.plusSeconds(5L * 86400)),
+        Timestamp.from(promisedReturnAt),
+        Timestamp.from(priceLockedAt));
+  }
+
+  private void saveAllocation(
+      long orderId,
+      LocalDate workDate,
+      ServiceTier tier,
+      short rollCount,
+      Instant orderReceivedAt) {
+    OrderCapacityAllocation allocation = new OrderCapacityAllocation();
+    allocation.setServiceOrderId(orderId);
+    allocation.setFilmLabId(labId);
+    allocation.setWorkDate(workDate);
+    allocation.setFilmProcessId(activeProcessId);
+    allocation.setFilmFormatId(activeFormatId);
+    allocation.setServiceTier(tier);
+    allocation.setRollCount(rollCount);
+    allocation.setOrderReceivedAt(orderReceivedAt);
+    orderCapacityAllocationRepository.saveAndFlush(allocation);
+  }
+
+  private static Instant vnTime(LocalDate date, int hour, int minute) {
+    return ZonedDateTime.of(date, LocalTime.of(hour, minute), CapacitySchedulingEngine.VIETNAM_ZONE)
+        .toInstant();
   }
 }

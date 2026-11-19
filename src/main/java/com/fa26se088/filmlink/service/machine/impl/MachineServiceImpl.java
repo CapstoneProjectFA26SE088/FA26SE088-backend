@@ -1,32 +1,58 @@
 package com.fa26se088.filmlink.service.machine.impl;
 
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
+import com.fa26se088.filmlink.dto.machine.CapacityProposal;
+import com.fa26se088.filmlink.dto.machine.CapacityRequest;
+import com.fa26se088.filmlink.dto.machine.DayAllocation;
+import com.fa26se088.filmlink.dto.machine.RollGroup;
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.MachineWorkingHourRequest;
+import com.fa26se088.filmlink.dto.machine.request.ReportMachineIncidentRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateSchedulingSettingsRequest;
+import com.fa26se088.filmlink.dto.machine.response.MachineIncidentResponse;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
+import com.fa26se088.filmlink.dto.machine.response.ScheduleChangeSummaryResponse;
 import com.fa26se088.filmlink.dto.machine.response.SchedulingSettingsResponse;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
 import com.fa26se088.filmlink.entity.machine.Machine;
+import com.fa26se088.filmlink.entity.machine.MachineIncident;
 import com.fa26se088.filmlink.entity.machine.MachineWorkingHour;
+import com.fa26se088.filmlink.entity.machine.OrderCapacityAllocation;
+import com.fa26se088.filmlink.entity.machine.ScheduleChange;
+import com.fa26se088.filmlink.entity.machine.enums.MachineIncidentCause;
 import com.fa26se088.filmlink.entity.machine.enums.MachineStatus;
 import com.fa26se088.filmlink.entity.machine.enums.MachineType;
+import com.fa26se088.filmlink.entity.machine.enums.ScheduleChangeStep;
+import com.fa26se088.filmlink.entity.machine.enums.ServiceTier;
 import com.fa26se088.filmlink.entity.masterdata.FilmFormat;
 import com.fa26se088.filmlink.entity.masterdata.FilmProcess;
 import com.fa26se088.filmlink.entity.masterdata.enums.CatalogStatus;
+import com.fa26se088.filmlink.entity.order.ServiceOrder;
+import com.fa26se088.filmlink.entity.order.enums.ServiceOrderStatus;
 import com.fa26se088.filmlink.exception.BusinessException;
 import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.mapper.machine.MachineMapper;
+import com.fa26se088.filmlink.repository.machine.MachineIncidentRepository;
 import com.fa26se088.filmlink.repository.machine.MachineRepository;
+import com.fa26se088.filmlink.repository.machine.OrderCapacityAllocationRepository;
+import com.fa26se088.filmlink.repository.machine.ScheduleChangeRepository;
 import com.fa26se088.filmlink.repository.masterdata.FilmFormatRepository;
 import com.fa26se088.filmlink.repository.masterdata.FilmProcessRepository;
+import com.fa26se088.filmlink.repository.order.ServiceOrderRepository;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
+import com.fa26se088.filmlink.service.machine.CapacitySchedulingService;
 import com.fa26se088.filmlink.service.machine.MachineService;
+import com.fa26se088.filmlink.service.machine.event.PromisedDateChangedEvent;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -36,14 +62,14 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Triển khai nghiệp vụ quản lý thiết bị máy tráng, máy scan và công suất ngày
- * cho Film Lab Owner
- * (UC68, FA26-72).
+ * Triển khai nghiệp vụ quản lý thiết bị máy tráng, máy scan, công suất ngày và sự cố thiết bị cho
+ * Film Lab Owner (UC68, UC70, UC71, FA26-72, FA26-76, FA26-77).
  */
 @Slf4j
 @Service
@@ -51,6 +77,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class MachineServiceImpl implements MachineService {
 
   private static final int DAYS_PER_WEEK = 7;
+  private static final int DEFAULT_FRAMES_PER_ROLL = 36;
+  private static final Duration CUSTOMER_RESPONSE_WINDOW = Duration.ofHours(48);
 
   private final MachineRepository machineRepository;
   private final FilmProcessRepository filmProcessRepository;
@@ -58,6 +86,12 @@ public class MachineServiceImpl implements MachineService {
   private final LabAccessService labAccessService;
   private final AuditLogService auditLogService;
   private final MachineMapper machineMapper;
+  private final MachineIncidentRepository machineIncidentRepository;
+  private final ScheduleChangeRepository scheduleChangeRepository;
+  private final OrderCapacityAllocationRepository orderCapacityAllocationRepository;
+  private final CapacitySchedulingService capacitySchedulingService;
+  private final ServiceOrderRepository serviceOrderRepository;
+  private final ApplicationEventPublisher eventPublisher;
 
   @Override
   @Transactional(readOnly = true)
@@ -254,6 +288,305 @@ public class MachineServiceImpl implements MachineService {
         lab.getExpressDailyCapPercent(),
         lab.getExpressCommitmentWorkingDays());
   }
+
+  @Override
+  @Transactional
+  public MachineIncidentResponse reportIncident(
+      Long ownerAccountId, Long machineId, ReportMachineIncidentRequest request) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+    Machine machine =
+        machineRepository
+            .findByIdAndFilmLabId(machineId, lab.getId())
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.MACHINE_NOT_FOUND,
+                        "Không tìm thấy máy hoặc máy không thuộc phòng lab của bạn."));
+
+    String description = normalizeModelName(request.description());
+    validateIncidentRequest(request, description);
+
+    final MachineStatus statusBefore = machine.getStatus();
+    MachineStatus statusAfter =
+        request.expectedAvailableAt() != null ? MachineStatus.MAINTENANCE : MachineStatus.DOWN;
+
+    MachineIncident incident = new MachineIncident();
+    incident.setMachineId(machine.getId());
+    incident.setCause(request.cause());
+    incident.setDescription(description);
+    incident.setUnavailableFrom(request.unavailableFrom());
+    incident.setExpectedAvailableAt(request.expectedAvailableAt());
+    incident.setMachineStatusAfter(statusAfter);
+    incident.setReportedByAccountId(ownerAccountId);
+    incident = machineIncidentRepository.saveAndFlush(incident);
+
+    machine.setStatus(statusAfter);
+    machineRepository.saveAndFlush(machine);
+
+    RescheduleResult rescheduleResult = rescheduleAffectedOrders(lab.getId(), incident);
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.MACHINE_INCIDENT_REPORTED,
+            AuditTargetType.MACHINE_INCIDENT,
+            incident.getId(),
+            "Báo cáo sự cố máy " + machine.getMachineCode() + " (" + incident.getCause() + ")",
+            toIncidentBeforeSnapshot(machine.getMachineCode(), statusBefore),
+            toIncidentAfterSnapshot(incident, rescheduleResult)));
+
+    log.info(
+        "Khai báo sự cố máy thành công: incidentId={}, machineId={}, statusAfter={}, affected={}, "
+            + "scheduleChanges={}",
+        incident.getId(),
+        machine.getId(),
+        statusAfter,
+        rescheduleResult.affectedOrderCount(),
+        rescheduleResult.scheduleChanges().size());
+
+    return new MachineIncidentResponse(
+        incident.getId(),
+        machine.getId(),
+        machine.getMachineCode(),
+        incident.getCause(),
+        incident.getDescription(),
+        incident.getUnavailableFrom(),
+        incident.getExpectedAvailableAt(),
+        incident.getMachineStatusAfter(),
+        incident.getReportedByAccountId(),
+        incident.getResolvedAt(),
+        rescheduleResult.affectedOrderCount(),
+        rescheduleResult.scheduleChanges(),
+        incident.getCreatedAt());
+  }
+
+  private void validateIncidentRequest(
+      ReportMachineIncidentRequest request, String normalizedDescription) {
+    if (request.cause() == MachineIncidentCause.OTHER && normalizedDescription == null) {
+      throw new BusinessException(
+          ErrorCode.VALIDATION_ERROR,
+          "Phải nhập mô tả chi tiết khi chọn nguyên nhân sự cố là OTHER.");
+    }
+    if (request.expectedAvailableAt() != null
+        && !request.expectedAvailableAt().isAfter(request.unavailableFrom())) {
+      throw new BusinessException(
+          ErrorCode.VALIDATION_ERROR,
+          "Thời điểm dự kiến khắc phục xong phải sau thời điểm bắt đầu sự cố.");
+    }
+  }
+
+  private RescheduleResult rescheduleAffectedOrders(Long labId, MachineIncident incident) {
+    LocalDate fromDate =
+        incident.getUnavailableFrom().atZone(CapacitySchedulingEngine.VIETNAM_ZONE).toLocalDate();
+    List<OrderCapacityAllocation> affectedSlice =
+        orderCapacityAllocationRepository.findByFilmLabIdAndWorkDateGreaterThanEqual(
+            labId, fromDate);
+    if (affectedSlice.isEmpty()) {
+      return new RescheduleResult(0, List.of());
+    }
+
+    Map<Long, List<OrderCapacityAllocation>> sliceByOrderId = new LinkedHashMap<>();
+    for (OrderCapacityAllocation allocation : affectedSlice) {
+      sliceByOrderId
+          .computeIfAbsent(allocation.getServiceOrderId(), ignored -> new ArrayList<>())
+          .add(allocation);
+    }
+
+    List<ServiceOrder> candidateOrders =
+        serviceOrderRepository.findAllById(sliceByOrderId.keySet());
+    List<AffectedOrderPlan> plans = new ArrayList<>();
+    for (ServiceOrder order : candidateOrders) {
+      if (order.getStatus() != ServiceOrderStatus.IN_PROCESSING
+          || order.getPromisedReturnAt() == null) {
+        continue;
+      }
+      List<OrderCapacityAllocation> currentAllocations =
+          orderCapacityAllocationRepository.findByServiceOrderIdOrderByWorkDateAsc(order.getId());
+      if (currentAllocations == null || currentAllocations.isEmpty()) {
+        currentAllocations = sliceByOrderId.getOrDefault(order.getId(), List.of());
+      }
+      if (currentAllocations.isEmpty()) {
+        continue;
+      }
+      plans.add(toAffectedOrderPlan(order, currentAllocations));
+    }
+
+    if (plans.isEmpty()) {
+      return new RescheduleResult(0, List.of());
+    }
+
+    // BR-61: ưu tiên đơn EXPRESS trước, sau đó STANDARD; cùng hạng sắp FIFO theo orderReceivedAt
+    plans.sort(
+        Comparator.comparingInt(
+                (AffectedOrderPlan p) ->
+                    p.order().getServiceTier() == ServiceTier.EXPRESS ? 0 : 1)
+            .thenComparing(AffectedOrderPlan::receivedAt)
+            .thenComparing(p -> p.order().getId()));
+
+    for (AffectedOrderPlan plan : plans) {
+      orderCapacityAllocationRepository.deleteByServiceOrderId(plan.order().getId());
+    }
+    orderCapacityAllocationRepository.flush();
+
+    List<ScheduleChangeSummaryResponse> scheduleChanges = new ArrayList<>();
+    for (AffectedOrderPlan plan : plans) {
+      ScheduleChangeSummaryResponse change = rescheduleSingleOrder(labId, incident, plan);
+      if (change != null) {
+        scheduleChanges.add(change);
+      }
+    }
+
+    return new RescheduleResult(plans.size(), scheduleChanges);
+  }
+
+  private ScheduleChangeSummaryResponse rescheduleSingleOrder(
+      Long labId, MachineIncident incident, AffectedOrderPlan plan) {
+    ServiceOrder order = plan.order();
+    CapacityRequest capacityRequest =
+        new CapacityRequest(
+            order.getId(), labId, order.getServiceTier(), plan.receivedAt(), plan.rollGroups());
+    CapacityProposal proposal = capacitySchedulingService.propose(capacityRequest);
+
+    if (!proposal.feasible()) {
+      orderCapacityAllocationRepository.saveAllAndFlush(plan.originalCopies());
+      return null;
+    }
+
+    List<OrderCapacityAllocation> newAllocations =
+        buildAllocations(order, labId, plan.receivedAt(), proposal.allocations());
+    if (!newAllocations.isEmpty()) {
+      orderCapacityAllocationRepository.saveAllAndFlush(newAllocations);
+    }
+
+    Instant oldPromisedAt = order.getPromisedReturnAt();
+    Instant newPromisedAt = proposal.promisedReturnAt();
+    if (newPromisedAt == null || newPromisedAt.equals(oldPromisedAt)) {
+      return null;
+    }
+
+    boolean requiresResponse =
+        proposal.tierCommitmentAt() != null && newPromisedAt.isAfter(proposal.tierCommitmentAt());
+    Instant responseDueAt =
+        requiresResponse ? Instant.now().plus(CUSTOMER_RESPONSE_WINDOW) : null;
+
+    ScheduleChange change = new ScheduleChange();
+    change.setServiceOrderId(order.getId());
+    change.setMachineIncidentId(incident.getId());
+    change.setStepApplied(ScheduleChangeStep.RESCHEDULED);
+    change.setOldPromisedAt(oldPromisedAt);
+    change.setNewPromisedAt(newPromisedAt);
+    change.setRequiresResponse(requiresResponse);
+    change.setResponseDueAt(responseDueAt);
+    change = scheduleChangeRepository.saveAndFlush(change);
+
+    eventPublisher.publishEvent(
+        new PromisedDateChangedEvent(
+            order.getId(), incident.getId(), oldPromisedAt, newPromisedAt, requiresResponse));
+
+    return new ScheduleChangeSummaryResponse(
+        change.getId(),
+        change.getServiceOrderId(),
+        change.getStepApplied(),
+        change.getOldPromisedAt(),
+        change.getNewPromisedAt(),
+        change.isRequiresResponse(),
+        change.getResponseDueAt());
+  }
+
+  private static AffectedOrderPlan toAffectedOrderPlan(
+      ServiceOrder order, List<OrderCapacityAllocation> currentAllocations) {
+    Instant receivedAt = currentAllocations.getFirst().getOrderReceivedAt();
+    if (receivedAt == null) {
+      receivedAt =
+          order.getPriceLockedAt() != null ? order.getPriceLockedAt() : order.getCreatedAt();
+    }
+
+    Map<List<Long>, Integer> rollCountsByGroup = new LinkedHashMap<>();
+    List<OrderCapacityAllocation> copies = new ArrayList<>(currentAllocations.size());
+    for (OrderCapacityAllocation existing : currentAllocations) {
+      rollCountsByGroup.merge(
+          List.of(existing.getFilmProcessId(), existing.getFilmFormatId()),
+          (int) existing.getRollCount(),
+          Integer::sum);
+      copies.add(copyAllocation(existing));
+    }
+
+    List<RollGroup> rollGroups =
+        rollCountsByGroup.entrySet().stream()
+            .map(
+                entry ->
+                    new RollGroup(
+                        entry.getKey().get(0),
+                        entry.getKey().get(1),
+                        entry.getValue(),
+                        DEFAULT_FRAMES_PER_ROLL))
+            .toList();
+
+    return new AffectedOrderPlan(order, receivedAt, rollGroups, copies);
+  }
+
+  private static OrderCapacityAllocation copyAllocation(OrderCapacityAllocation source) {
+    OrderCapacityAllocation copy = new OrderCapacityAllocation();
+    copy.setServiceOrderId(source.getServiceOrderId());
+    copy.setFilmLabId(source.getFilmLabId());
+    copy.setWorkDate(source.getWorkDate());
+    copy.setFilmProcessId(source.getFilmProcessId());
+    copy.setFilmFormatId(source.getFilmFormatId());
+    copy.setServiceTier(source.getServiceTier());
+    copy.setRollCount(source.getRollCount());
+    copy.setOrderReceivedAt(source.getOrderReceivedAt());
+    return copy;
+  }
+
+  private static List<OrderCapacityAllocation> buildAllocations(
+      ServiceOrder order, Long labId, Instant receivedAt, List<DayAllocation> dayAllocations) {
+    List<OrderCapacityAllocation> entities = new ArrayList<>(dayAllocations.size());
+    for (DayAllocation item : dayAllocations) {
+      OrderCapacityAllocation allocation = new OrderCapacityAllocation();
+      allocation.setServiceOrderId(order.getId());
+      allocation.setFilmLabId(labId);
+      allocation.setWorkDate(item.workDate());
+      allocation.setFilmProcessId(item.filmProcessId());
+      allocation.setFilmFormatId(item.filmFormatId());
+      allocation.setServiceTier(order.getServiceTier());
+      allocation.setRollCount((short) item.rollCount());
+      allocation.setOrderReceivedAt(receivedAt);
+      entities.add(allocation);
+    }
+    return entities;
+  }
+
+  private static Map<String, Object> toIncidentBeforeSnapshot(
+      String machineCode, MachineStatus statusBefore) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("machineCode", machineCode);
+    snapshot.put("machineStatus", statusBefore.name());
+    return snapshot;
+  }
+
+  private static Map<String, Object> toIncidentAfterSnapshot(
+      MachineIncident incident, RescheduleResult rescheduleResult) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("cause", incident.getCause().name());
+    snapshot.put("unavailableFrom", incident.getUnavailableFrom().toString());
+    snapshot.put(
+        "expectedAvailableAt",
+        incident.getExpectedAvailableAt() != null
+            ? incident.getExpectedAvailableAt().toString()
+            : null);
+    snapshot.put("machineStatus", incident.getMachineStatusAfter().name());
+    snapshot.put("affectedOrderCount", rescheduleResult.affectedOrderCount());
+    snapshot.put("scheduleChangeCount", rescheduleResult.scheduleChanges().size());
+    return snapshot;
+  }
+
+  private record AffectedOrderPlan(
+      ServiceOrder order,
+      Instant receivedAt,
+      List<RollGroup> rollGroups,
+      List<OrderCapacityAllocation> originalCopies) {}
+
+  private record RescheduleResult(
+      int affectedOrderCount, List<ScheduleChangeSummaryResponse> scheduleChanges) {}
 
   private Set<FilmProcess> resolveProcessesForType(
       MachineType machineType, Set<Long> filmProcessIds) {

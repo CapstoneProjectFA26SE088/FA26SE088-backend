@@ -82,6 +82,10 @@ public enum ErrorCode {
   MACHINE_CODE_DUPLICATE(HttpStatus.CONFLICT, null),
   /** BR-16: Film Process hoặc Film Format của máy không tồn tại hoặc không còn ACTIVE. */
   MACHINE_MASTERDATA_INACTIVE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC70: không tìm thấy sự cố của máy. */
+  MACHINE_INCIDENT_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  /** UC70: sự cố của máy đã được giải quyết trước đó. */
+  MACHINE_INCIDENT_ALREADY_RESOLVED(HttpStatus.CONFLICT, null),
 
   // --- order ---
   /** UC20, BR-34, BR-57: lab chưa bật nhận đơn hoặc chưa đủ điều kiện nhận đơn. */

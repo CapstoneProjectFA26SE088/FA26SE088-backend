@@ -1,8 +1,10 @@
 package com.fa26se088.filmlink.controller.machine;
 
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
+import com.fa26se088.filmlink.dto.machine.request.ReportMachineIncidentRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateSchedulingSettingsRequest;
+import com.fa26se088.filmlink.dto.machine.response.MachineIncidentResponse;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
 import com.fa26se088.filmlink.dto.machine.response.SchedulingSettingsResponse;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
@@ -78,5 +80,21 @@ public class MachineController {
       @AuthenticationPrincipal AuthenticatedAccount account,
       @Valid @RequestBody UpdateSchedulingSettingsRequest request) {
     return machineService.updateSchedulingSettings(account.id(), request);
+  }
+
+  /**
+   * Khai báo sự cố máy tráng/scan và tự động tái xếp lịch các đơn đang xử lý bị ảnh hưởng
+   * (UC70, UC71, FA26-76, FA26-77).
+   */
+  @PostMapping("/machines/{id}/incidents")
+  @ResponseStatus(HttpStatus.CREATED)
+  @Operation(
+      summary =
+          "Khai báo sự cố máy và tự động tái xếp lịch các đơn bị ảnh hưởng (UC70, UC71)")
+  public MachineIncidentResponse reportIncident(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @Valid @RequestBody ReportMachineIncidentRequest request) {
+    return machineService.reportIncident(account.id(), id, request);
   }
 }

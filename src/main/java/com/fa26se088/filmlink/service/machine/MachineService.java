@@ -1,8 +1,10 @@
 package com.fa26se088.filmlink.service.machine;
 
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
+import com.fa26se088.filmlink.dto.machine.request.ReportMachineIncidentRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateSchedulingSettingsRequest;
+import com.fa26se088.filmlink.dto.machine.response.MachineIncidentResponse;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
 import com.fa26se088.filmlink.dto.machine.response.SchedulingSettingsResponse;
 import java.util.List;
@@ -54,4 +56,16 @@ public interface MachineService {
    */
   SchedulingSettingsResponse updateSchedulingSettings(
       Long ownerAccountId, UpdateSchedulingSettingsRequest request);
+
+  /**
+   * Khai báo sự cố cho máy của lab và tự động tái xếp lịch các đơn đang xử lý bị ảnh hưởng
+   * (UC70, UC71, BR-61).
+   *
+   * @param ownerAccountId ID tài khoản FILM_LAB_OWNER đang đăng nhập
+   * @param machineId ID máy gặp sự cố
+   * @param request thông tin sự cố gồm nguyên nhân, mô tả và khoảng thời gian gián đoạn
+   * @return thông tin sự cố đã ghi nhận kèm danh sách các thay đổi ngày hẹn trả
+   */
+  MachineIncidentResponse reportIncident(
+      Long ownerAccountId, Long machineId, ReportMachineIncidentRequest request);
 }

@@ -3,35 +3,59 @@ package com.fa26se088.filmlink.service.machine.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyIterable;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
+import com.fa26se088.filmlink.dto.machine.CapacityProposal;
+import com.fa26se088.filmlink.dto.machine.CapacityRequest;
+import com.fa26se088.filmlink.dto.machine.DayAllocation;
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.MachineWorkingHourRequest;
+import com.fa26se088.filmlink.dto.machine.request.ReportMachineIncidentRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateSchedulingSettingsRequest;
+import com.fa26se088.filmlink.dto.machine.response.MachineIncidentResponse;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
 import com.fa26se088.filmlink.dto.machine.response.SchedulingSettingsResponse;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
 import com.fa26se088.filmlink.entity.machine.Machine;
+import com.fa26se088.filmlink.entity.machine.MachineIncident;
 import com.fa26se088.filmlink.entity.machine.MachineWorkingHour;
+import com.fa26se088.filmlink.entity.machine.OrderCapacityAllocation;
+import com.fa26se088.filmlink.entity.machine.ScheduleChange;
+import com.fa26se088.filmlink.entity.machine.enums.MachineIncidentCause;
 import com.fa26se088.filmlink.entity.machine.enums.MachineStatus;
 import com.fa26se088.filmlink.entity.machine.enums.MachineType;
+import com.fa26se088.filmlink.entity.machine.enums.ScheduleChangeStep;
+import com.fa26se088.filmlink.entity.machine.enums.ServiceTier;
 import com.fa26se088.filmlink.entity.masterdata.FilmFormat;
 import com.fa26se088.filmlink.entity.masterdata.FilmProcess;
 import com.fa26se088.filmlink.entity.masterdata.enums.CatalogStatus;
+import com.fa26se088.filmlink.entity.order.ServiceOrder;
+import com.fa26se088.filmlink.entity.order.enums.ServiceOrderStatus;
 import com.fa26se088.filmlink.exception.BusinessException;
 import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.mapper.machine.MachineMapper;
+import com.fa26se088.filmlink.repository.machine.MachineIncidentRepository;
 import com.fa26se088.filmlink.repository.machine.MachineRepository;
+import com.fa26se088.filmlink.repository.machine.OrderCapacityAllocationRepository;
+import com.fa26se088.filmlink.repository.machine.ScheduleChangeRepository;
 import com.fa26se088.filmlink.repository.masterdata.FilmFormatRepository;
 import com.fa26se088.filmlink.repository.masterdata.FilmProcessRepository;
+import com.fa26se088.filmlink.repository.order.ServiceOrderRepository;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
+import com.fa26se088.filmlink.service.machine.CapacitySchedulingService;
+import com.fa26se088.filmlink.service.machine.event.PromisedDateChangedEvent;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,8 +66,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -59,6 +85,18 @@ class MachineServiceImplTest {
   private LabAccessService labAccessService;
   @Mock
   private AuditLogService auditLogService;
+  @Mock
+  private MachineIncidentRepository machineIncidentRepository;
+  @Mock
+  private ScheduleChangeRepository scheduleChangeRepository;
+  @Mock
+  private OrderCapacityAllocationRepository orderCapacityAllocationRepository;
+  @Mock
+  private CapacitySchedulingService capacitySchedulingService;
+  @Mock
+  private ServiceOrderRepository serviceOrderRepository;
+  @Mock
+  private ApplicationEventPublisher eventPublisher;
 
   private MachineServiceImpl machineService;
 
@@ -70,7 +108,13 @@ class MachineServiceImplTest {
         filmFormatRepository,
         labAccessService,
         auditLogService,
-        new MachineMapper());
+        new MachineMapper(),
+        machineIncidentRepository,
+        scheduleChangeRepository,
+        orderCapacityAllocationRepository,
+        capacitySchedulingService,
+        serviceOrderRepository,
+        eventPublisher);
   }
 
   @Test
@@ -239,15 +283,14 @@ class MachineServiceImplTest {
     discontinuedFormat.setStatus(CatalogStatus.DISCONTINUED);
     when(filmFormatRepository.findAllById(Set.of(1L))).thenReturn(List.of(discontinuedFormat));
 
-    CreateMachineRequest request =
-        new CreateMachineRequest(
-            "S1",
-            "Frontier SP-3000",
-            MachineType.SCANNER,
-            327,
-            null,
-            Set.of(1L),
-            createStandardWeekHourRequests());
+    CreateMachineRequest request = new CreateMachineRequest(
+        "S1",
+        "Frontier SP-3000",
+        MachineType.SCANNER,
+        327,
+        null,
+        Set.of(1L),
+        createStandardWeekHourRequests());
 
     assertThatThrownBy(() -> machineService.createMachine(100L, request))
         .isInstanceOfSatisfying(
@@ -258,8 +301,7 @@ class MachineServiceImplTest {
   }
 
   @Test
-  @DisplayName(
-      "Cập nhật thông tin máy thành công -> giữ nguyên machineCode, tính lại dailyCapacityRolls, ghi audit MACHINE_UPDATED")
+  @DisplayName("Cập nhật thông tin máy thành công -> giữ nguyên machineCode, tính lại dailyCapacityRolls, ghi audit MACHINE_UPDATED")
   void updateMachine_success() {
     FilmLab lab = createLab(10L, 100L);
     when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
@@ -289,16 +331,15 @@ class MachineServiceImplTest {
     when(machineRepository.saveAndFlush(any(Machine.class)))
         .thenAnswer(inv -> inv.getArgument(0));
 
-    UpdateMachineRequest request =
-        new UpdateMachineRequest(
-            "Noritsu V30 Pro",
-            30,
-            Set.of(1L),
-            Set.of(1L),
-            List.of(
-                new MachineWorkingHourRequest(
-                    (short) 1, false, LocalTime.of(8, 0), LocalTime.of(18, 0)),
-                new MachineWorkingHourRequest((short) 2, true, null, null)));
+    UpdateMachineRequest request = new UpdateMachineRequest(
+        "Noritsu V30 Pro",
+        30,
+        Set.of(1L),
+        Set.of(1L),
+        List.of(
+            new MachineWorkingHourRequest(
+                (short) 1, false, LocalTime.of(8, 0), LocalTime.of(18, 0)),
+            new MachineWorkingHourRequest((short) 2, true, null, null)));
 
     MachineResponse response = machineService.updateMachine(100L, 55L, request);
 
@@ -323,13 +364,12 @@ class MachineServiceImplTest {
     when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
     when(machineRepository.findByIdAndFilmLabId(999L, 10L)).thenReturn(Optional.empty());
 
-    UpdateMachineRequest request =
-        new UpdateMachineRequest(
-            "Model X",
-            20,
-            Set.of(1L),
-            Set.of(1L),
-            createStandardWeekHourRequests());
+    UpdateMachineRequest request = new UpdateMachineRequest(
+        "Model X",
+        20,
+        Set.of(1L),
+        Set.of(1L),
+        createStandardWeekHourRequests());
 
     assertThatThrownBy(() -> machineService.updateMachine(100L, 999L, request))
         .isInstanceOfSatisfying(
@@ -340,8 +380,7 @@ class MachineServiceImplTest {
   }
 
   @Test
-  @DisplayName(
-      "Cập nhật tham số lập lịch tự động (qcBufferHours, expressDailyCapPercent, expressCommitmentWorkingDays) thành công -> ghi audit")
+  @DisplayName("Cập nhật tham số lập lịch tự động (qcBufferHours, expressDailyCapPercent, expressCommitmentWorkingDays) thành công -> ghi audit")
   void updateSchedulingSettings_success() {
     FilmLab lab = createLab(10L, 100L);
     lab.setQcBufferHours((short) 4);
@@ -349,8 +388,7 @@ class MachineServiceImplTest {
     lab.setExpressCommitmentWorkingDays(null);
     when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
 
-    UpdateSchedulingSettingsRequest request =
-        new UpdateSchedulingSettingsRequest((short) 6, (short) 25, (short) 1);
+    UpdateSchedulingSettingsRequest request = new UpdateSchedulingSettingsRequest((short) 6, (short) 25, (short) 1);
 
     SchedulingSettingsResponse response = machineService.updateSchedulingSettings(100L, request);
 
@@ -369,6 +407,284 @@ class MachineServiceImplTest {
         .isEqualTo(AuditAction.LAB_SCHEDULING_SETTINGS_UPDATED);
     assertThat(auditCaptor.getValue().targetType()).isEqualTo(AuditTargetType.FILM_LAB);
     assertThat(auditCaptor.getValue().targetId()).isEqualTo(10L);
+  }
+
+  @Test
+  @DisplayName("TC-SM04-02 & TC-F14-01: Khai báo sự cố có expectedAvailableAt -> MAINTENANCE, tái xếp lịch ưu tiên EXPRESS trước STANDARD (FIFO), lưu schedule_changes và phát event")
+  void reportIncident_withExpectedAvailableAt_reschedulesExpressBeforeStandardFifo() {
+    FilmLab lab = createLab(10L, 100L);
+    when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
+
+    Machine p1 = new Machine();
+    ReflectionTestUtils.setField(p1, "id", 1L);
+    p1.setFilmLabId(10L);
+    p1.setMachineCode("P1");
+    p1.setMachineType(MachineType.PROCESSOR);
+    p1.setCapacityPerHour(2);
+    p1.setStatus(MachineStatus.ACTIVE);
+    when(machineRepository.findByIdAndFilmLabId(1L, 10L)).thenReturn(Optional.of(p1));
+    when(machineRepository.saveAndFlush(any(Machine.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(machineIncidentRepository.saveAndFlush(any(MachineIncident.class)))
+        .thenAnswer(
+            inv -> {
+              MachineIncident inc = inv.getArgument(0);
+              ReflectionTestUtils.setField(inc, "id", 88L);
+              return inc;
+            });
+
+    Instant unavailableFrom = Instant.parse("2026-11-18T01:00:00Z"); // 08:00 VN Thứ 4
+    Instant expectedAvailable = Instant.parse("2026-11-19T01:00:00Z"); // 08:00 VN Thứ 5
+
+    Instant stdOlderReceived = Instant.parse("2026-11-16T03:00:00Z");
+    Instant stdNewerReceived = Instant.parse("2026-11-16T04:00:00Z");
+    Instant expressLaterReceived = Instant.parse("2026-11-16T05:00:00Z");
+
+    Instant stdOldPromised = Instant.parse("2026-11-19T05:00:00Z"); // 12:00 Thứ 5
+    Instant expressOldPromised = Instant.parse("2026-11-18T05:00:00Z");
+
+    ServiceOrder stdNewerOrder = createInProcessingOrder(201L, 10L, ServiceTier.STANDARD, stdOldPromised);
+    ServiceOrder stdOlderOrder = createInProcessingOrder(202L, 10L, ServiceTier.STANDARD, stdOldPromised);
+    ServiceOrder expressOrder = createInProcessingOrder(203L, 10L, ServiceTier.EXPRESS, expressOldPromised);
+
+    OrderCapacityAllocation alloc201 = createAllocation(201L, 10L, LocalDate.of(2026, 11, 18), ServiceTier.STANDARD,
+        stdNewerReceived);
+    OrderCapacityAllocation alloc202 = createAllocation(202L, 10L, LocalDate.of(2026, 11, 18), ServiceTier.STANDARD,
+        stdOlderReceived);
+    OrderCapacityAllocation alloc203 = createAllocation(203L, 10L, LocalDate.of(2026, 11, 18), ServiceTier.EXPRESS,
+        expressLaterReceived);
+
+    when(orderCapacityAllocationRepository.findByFilmLabIdAndWorkDateGreaterThanEqual(
+        10L, LocalDate.of(2026, 11, 18)))
+        .thenReturn(List.of(alloc201, alloc202, alloc203));
+    when(serviceOrderRepository.findAllById(anyIterable()))
+        .thenReturn(List.of(stdNewerOrder, stdOlderOrder, expressOrder));
+
+    when(orderCapacityAllocationRepository.findByServiceOrderIdOrderByWorkDateAsc(201L))
+        .thenReturn(List.of(alloc201));
+    when(orderCapacityAllocationRepository.findByServiceOrderIdOrderByWorkDateAsc(202L))
+        .thenReturn(List.of(alloc202));
+    when(orderCapacityAllocationRepository.findByServiceOrderIdOrderByWorkDateAsc(203L))
+        .thenReturn(List.of(alloc203));
+
+    Instant expressNewPromised = Instant.parse("2026-11-19T05:00:00Z"); // Trong cam kết
+    Instant expressCommitment = Instant.parse("2026-11-20T03:00:00Z");
+    Instant stdOlderNewPromised = Instant.parse("2026-11-20T05:00:00Z"); // 12:00 Thứ 6 <= 10:00 T7
+    Instant stdCommitment = Instant.parse("2026-11-21T03:00:00Z"); // 10:00 T7
+    Instant stdNewerNewPromised = Instant.parse("2026-11-23T05:00:00Z"); // 12:00 T2 > 10:00 T7
+
+    when(capacitySchedulingService.propose(any(CapacityRequest.class)))
+        .thenAnswer(
+            inv -> {
+              CapacityRequest req = inv.getArgument(0);
+              if (req.serviceOrderId().equals(203L)) {
+                return new CapacityProposal(
+                    true,
+                    null,
+                    List.of(new DayAllocation(LocalDate.of(2026, 11, 19), 1L, 1L, 3)),
+                    expressNewPromised,
+                    expressCommitment);
+              }
+              if (req.serviceOrderId().equals(202L)) {
+                return new CapacityProposal(
+                    true,
+                    null,
+                    List.of(new DayAllocation(LocalDate.of(2026, 11, 19), 1L, 1L, 3)),
+                    stdOlderNewPromised,
+                    stdCommitment);
+              }
+              return new CapacityProposal(
+                  true,
+                  null,
+                  List.of(new DayAllocation(LocalDate.of(2026, 11, 21), 1L, 1L, 3)),
+                  stdNewerNewPromised,
+                  stdCommitment);
+            });
+
+    final long[] changeSeq = { 500L };
+    when(scheduleChangeRepository.saveAndFlush(any(ScheduleChange.class)))
+        .thenAnswer(
+            inv -> {
+              ScheduleChange sc = inv.getArgument(0);
+              ReflectionTestUtils.setField(sc, "id", changeSeq[0]++);
+              return sc;
+            });
+
+    ReportMachineIncidentRequest request = new ReportMachineIncidentRequest(
+        MachineIncidentCause.MACHINE_FAILURE,
+        "Hỏng motor kéo phim P1",
+        unavailableFrom,
+        expectedAvailable);
+
+    MachineIncidentResponse response = machineService.reportIncident(100L, 1L, request);
+
+    assertThat(response.id()).isEqualTo(88L);
+    assertThat(response.machineStatusAfter()).isEqualTo(MachineStatus.MAINTENANCE);
+    assertThat(p1.getStatus()).isEqualTo(MachineStatus.MAINTENANCE);
+    assertThat(response.affectedOrderCount()).isEqualTo(3);
+    assertThat(response.scheduleChanges()).hasSize(3);
+
+    // Xác minh thứ tự tái xếp lịch: EXPRESS (203) -> STANDARD cũ hơn (202) ->
+    // STANDARD mới hơn (201)
+    ArgumentCaptor<CapacityRequest> reqCaptor = ArgumentCaptor.forClass(CapacityRequest.class);
+    verify(capacitySchedulingService, times(3)).propose(reqCaptor.capture());
+    assertThat(reqCaptor.getAllValues())
+        .extracting(CapacityRequest::serviceOrderId)
+        .containsExactly(203L, 202L, 201L);
+
+    // Xác minh delete cũ trước rồi lưu mới
+    InOrder order = inOrder(orderCapacityAllocationRepository, capacitySchedulingService);
+    order.verify(orderCapacityAllocationRepository).deleteByServiceOrderId(203L);
+    order.verify(orderCapacityAllocationRepository).deleteByServiceOrderId(202L);
+    order.verify(orderCapacityAllocationRepository).deleteByServiceOrderId(201L);
+    order.verify(orderCapacityAllocationRepository).flush();
+    order.verify(capacitySchedulingService).propose(any());
+
+    // Xác minh ràng buộc requiresResponse và responseDueAt của schedule_changes
+    ArgumentCaptor<ScheduleChange> scCaptor = ArgumentCaptor.forClass(ScheduleChange.class);
+    verify(scheduleChangeRepository, times(3)).saveAndFlush(scCaptor.capture());
+    List<ScheduleChange> savedChanges = scCaptor.getAllValues();
+    assertThat(savedChanges.get(0).getServiceOrderId()).isEqualTo(203L);
+    assertThat(savedChanges.get(0).isRequiresResponse()).isFalse();
+    assertThat(savedChanges.get(0).getResponseDueAt()).isNull();
+    assertThat(savedChanges.get(0).getStepApplied()).isEqualTo(ScheduleChangeStep.RESCHEDULED);
+
+    assertThat(savedChanges.get(1).getServiceOrderId()).isEqualTo(202L);
+    assertThat(savedChanges.get(1).isRequiresResponse()).isFalse();
+    assertThat(savedChanges.get(1).getResponseDueAt()).isNull();
+
+    assertThat(savedChanges.get(2).getServiceOrderId()).isEqualTo(201L);
+    assertThat(savedChanges.get(2).isRequiresResponse()).isTrue();
+    assertThat(savedChanges.get(2).getResponseDueAt()).isNotNull();
+
+    ArgumentCaptor<PromisedDateChangedEvent> eventCaptor = ArgumentCaptor.forClass(PromisedDateChangedEvent.class);
+    verify(eventPublisher, times(3)).publishEvent(eventCaptor.capture());
+    assertThat(eventCaptor.getAllValues())
+        .extracting(PromisedDateChangedEvent::serviceOrderId)
+        .containsExactly(203L, 202L, 201L);
+    assertThat(eventCaptor.getAllValues().get(2).requiresCustomerResponse()).isTrue();
+
+    ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+    verify(auditLogService).recordSuccess(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().action()).isEqualTo(AuditAction.MACHINE_INCIDENT_REPORTED);
+    assertThat(auditCaptor.getValue().targetType())
+        .isEqualTo(AuditTargetType.MACHINE_INCIDENT);
+    assertThat(auditCaptor.getValue().targetId()).isEqualTo(88L);
+  }
+
+  @Test
+  @DisplayName("Khai báo sự cố không có expectedAvailableAt (chưa rõ thời điểm khắc phục) -> máy chuyển DOWN")
+  void reportIncident_withoutExpectedAvailableAt_setsMachineStatusDown() {
+    FilmLab lab = createLab(10L, 100L);
+    when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
+
+    Machine p1 = new Machine();
+    ReflectionTestUtils.setField(p1, "id", 1L);
+    p1.setFilmLabId(10L);
+    p1.setMachineCode("P1");
+    p1.setMachineType(MachineType.PROCESSOR);
+    p1.setCapacityPerHour(2);
+    p1.setStatus(MachineStatus.ACTIVE);
+    when(machineRepository.findByIdAndFilmLabId(1L, 10L)).thenReturn(Optional.of(p1));
+    when(machineRepository.saveAndFlush(any(Machine.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(machineIncidentRepository.saveAndFlush(any(MachineIncident.class)))
+        .thenAnswer(
+            inv -> {
+              MachineIncident inc = inv.getArgument(0);
+              ReflectionTestUtils.setField(inc, "id", 89L);
+              return inc;
+            });
+    when(orderCapacityAllocationRepository.findByFilmLabIdAndWorkDateGreaterThanEqual(any(), any()))
+        .thenReturn(List.of());
+
+    ReportMachineIncidentRequest request = new ReportMachineIncidentRequest(
+        MachineIncidentCause.POWER_OUTAGE,
+        "Mất điện lưới khu vực chưa rõ giờ có lại",
+        Instant.parse("2026-11-18T01:00:00Z"),
+        null);
+
+    MachineIncidentResponse response = machineService.reportIncident(100L, 1L, request);
+
+    assertThat(response.machineStatusAfter()).isEqualTo(MachineStatus.DOWN);
+    assertThat(p1.getStatus()).isEqualTo(MachineStatus.DOWN);
+    assertThat(response.affectedOrderCount()).isZero();
+    assertThat(response.scheduleChanges()).isEmpty();
+  }
+
+  @Test
+  @DisplayName("Khai báo sự cố cause = OTHER nhưng thiếu mô tả -> ném 400 VALIDATION_ERROR")
+  void reportIncident_causeOtherWithoutDescription_throwsValidationError() {
+    FilmLab lab = createLab(10L, 100L);
+    when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
+
+    Machine p1 = new Machine();
+    ReflectionTestUtils.setField(p1, "id", 1L);
+    p1.setFilmLabId(10L);
+    p1.setMachineCode("P1");
+    p1.setStatus(MachineStatus.ACTIVE);
+    when(machineRepository.findByIdAndFilmLabId(1L, 10L)).thenReturn(Optional.of(p1));
+
+    ReportMachineIncidentRequest request = new ReportMachineIncidentRequest(
+        MachineIncidentCause.OTHER,
+        "   ",
+        Instant.parse("2026-11-18T01:00:00Z"),
+        Instant.parse("2026-11-19T01:00:00Z"));
+
+    assertThatThrownBy(() -> machineService.reportIncident(100L, 1L, request))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+
+    verify(machineIncidentRepository, never()).saveAndFlush(any());
+  }
+
+  @Test
+  @DisplayName("Khai báo sự cố expectedAvailableAt <= unavailableFrom -> ném 400 VALIDATION_ERROR")
+  void reportIncident_expectedAvailableNotAfterUnavailableFrom_throwsValidationError() {
+    FilmLab lab = createLab(10L, 100L);
+    when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
+
+    Machine p1 = new Machine();
+    ReflectionTestUtils.setField(p1, "id", 1L);
+    p1.setFilmLabId(10L);
+    p1.setMachineCode("P1");
+    p1.setStatus(MachineStatus.ACTIVE);
+    when(machineRepository.findByIdAndFilmLabId(1L, 10L)).thenReturn(Optional.of(p1));
+
+    Instant ts = Instant.parse("2026-11-18T01:00:00Z");
+    ReportMachineIncidentRequest request = new ReportMachineIncidentRequest(
+        MachineIncidentCause.CHEMICALS_RUN_OUT, "Hết hóa chất C-41", ts, ts);
+
+    assertThatThrownBy(() -> machineService.reportIncident(100L, 1L, request))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.VALIDATION_ERROR));
+
+    verify(machineIncidentRepository, never()).saveAndFlush(any());
+  }
+
+  private ServiceOrder createInProcessingOrder(
+      Long orderId, Long labId, ServiceTier tier, Instant promisedReturnAt) {
+    ServiceOrder order = new ServiceOrder();
+    ReflectionTestUtils.setField(order, "id", orderId);
+    order.setFilmLabId(labId);
+    order.setServiceTier(tier);
+    order.setStatus(ServiceOrderStatus.IN_PROCESSING);
+    order.setPromisedReturnAt(promisedReturnAt);
+    return order;
+  }
+
+  private OrderCapacityAllocation createAllocation(
+      Long orderId, Long labId, LocalDate workDate, ServiceTier tier, Instant orderReceivedAt) {
+    OrderCapacityAllocation allocation = new OrderCapacityAllocation();
+    allocation.setServiceOrderId(orderId);
+    allocation.setFilmLabId(labId);
+    allocation.setWorkDate(workDate);
+    allocation.setFilmProcessId(1L);
+    allocation.setFilmFormatId(1L);
+    allocation.setServiceTier(tier);
+    allocation.setRollCount((short) 3);
+    allocation.setOrderReceivedAt(orderReceivedAt);
+    return allocation;
   }
 
   private FilmLab createLab(Long labId, Long ownerAccountId) {

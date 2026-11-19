@@ -27,6 +27,8 @@ public enum AuditTargetType {
   // --- machine (UC68) ---
   /** UC68: thiết bị máy tráng / máy scan của lab. */
   MACHINE,
+  /** UC70: sự cố thiết bị máy tráng / máy scan của lab. */
+  MACHINE_INCIDENT,
 
   // --- order ---
   /** UC20: đơn dịch vụ tráng / scan. */
