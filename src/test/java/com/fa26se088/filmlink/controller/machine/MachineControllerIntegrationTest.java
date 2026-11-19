@@ -3,6 +3,7 @@ package com.fa26se088.filmlink.controller.machine;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
@@ -681,6 +682,67 @@ class MachineControllerIntegrationTest {
 
     Machine updatedP1 = machineRepository.findById(savedP1Id).orElseThrow();
     assertThat(updatedP1.getStatus()).isEqualTo(MachineStatus.DOWN);
+  }
+
+  @Test
+  @DisplayName(
+      "TC-SM04-06: Giải quyết sự cố P1 -> 200 OK, resolvedAt != null, máy khôi phục ACTIVE, ghi audit; gọi lại lần 2 -> 409 MACHINE_INCIDENT_ALREADY_RESOLVED")
+  void tcSm0406_resolveIncident_restoresMachineActiveAndRejectsSecondResolve() throws Exception {
+    String reportBody =
+        """
+        {
+          "cause": "MACHINE_FAILURE",
+          "description": "Thay sensor P1",
+          "unavailableFrom": "2026-11-18T01:00:00Z",
+          "expectedAvailableAt": "2026-11-18T09:00:00Z"
+        }
+        """;
+
+    String reportResponse =
+        mockMvc
+            .perform(
+                post(API_PATH + "/" + savedP1Id + "/incidents")
+                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(reportBody))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.machineStatusAfter", is("MAINTENANCE")))
+            .andReturn()
+            .getResponse()
+            .getContentAsString(StandardCharsets.UTF_8);
+
+    long incidentId = objectMapper.readTree(reportResponse).get("id").asLong();
+
+    mockMvc
+        .perform(
+            post(API_PATH + "/" + savedP1Id + "/incidents/" + incidentId + "/resolve")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id", is((int) incidentId)))
+        .andExpect(jsonPath("$.machineId", is(savedP1Id.intValue())))
+        .andExpect(jsonPath("$.resolvedAt", notNullValue()))
+        .andExpect(jsonPath("$.machineStatusAfter", is("ACTIVE")));
+
+    Machine restoredP1 = machineRepository.findById(savedP1Id).orElseThrow();
+    assertThat(restoredP1.getStatus()).isEqualTo(MachineStatus.ACTIVE);
+
+    List<AuditLog> auditLogs =
+        auditLogRepository
+            .findAll(
+                AuditLogRepository.byTarget(AuditTargetType.MACHINE_INCIDENT, incidentId),
+                PageRequest.of(0, 10))
+            .getContent();
+    assertThat(auditLogs)
+        .anySatisfy(
+            logEntry ->
+                assertThat(logEntry.getAction()).isEqualTo(AuditAction.MACHINE_INCIDENT_RESOLVED));
+
+    mockMvc
+        .perform(
+            post(API_PATH + "/" + savedP1Id + "/incidents/" + incidentId + "/resolve")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.errorCode", is("MACHINE_INCIDENT_ALREADY_RESOLVED")));
   }
 
   private long insertInProcessingOrder(Instant priceLockedAt, Instant promisedReturnAt) {

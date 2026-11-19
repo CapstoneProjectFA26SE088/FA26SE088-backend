@@ -97,4 +97,18 @@ public class MachineController {
       @Valid @RequestBody ReportMachineIncidentRequest request) {
     return machineService.reportIncident(account.id(), id, request);
   }
+
+  /**
+   * Xác nhận giải quyết xong sự cố máy và khôi phục trạng thái máy về ACTIVE (UC70, TC-SM04-06).
+   */
+  @PostMapping("/machines/{id}/incidents/{incidentId}/resolve")
+  @Operation(
+      summary =
+          "Xác nhận giải quyết xong sự cố máy và khôi phục máy về trạng thái ACTIVE (UC70)")
+  public MachineIncidentResponse resolveIncident(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @PathVariable Long incidentId) {
+    return machineService.resolveIncident(account.id(), id, incidentId);
+  }
 }

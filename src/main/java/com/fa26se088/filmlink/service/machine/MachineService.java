@@ -68,4 +68,14 @@ public interface MachineService {
    */
   MachineIncidentResponse reportIncident(
       Long ownerAccountId, Long machineId, ReportMachineIncidentRequest request);
+
+  /**
+   * Xác nhận đã khắc phục xong sự cố máy và khôi phục trạng thái máy về ACTIVE (UC70, TC-SM04-06).
+   *
+   * @param ownerAccountId ID tài khoản FILM_LAB_OWNER đang đăng nhập
+   * @param machineId ID máy gặp sự cố
+   * @param incidentId ID bản ghi sự cố cần giải quyết
+   * @return thông tin sự cố sau khi đã đánh dấu resolvedAt và khôi phục trạng thái máy
+   */
+  MachineIncidentResponse resolveIncident(Long ownerAccountId, Long machineId, Long incidentId);
 }

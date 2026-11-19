@@ -68,7 +68,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Triển khai nghiệp vụ quản lý thiết bị máy tráng, máy scan, công suất ngày và sự cố thiết bị cho
+ * Triển khai nghiệp vụ quản lý thiết bị máy tráng, máy scan, công suất ngày và
+ * sự cố thiết bị cho
  * Film Lab Owner (UC68, UC70, UC71, FA26-72, FA26-76, FA26-77).
  */
 @Slf4j
@@ -190,8 +191,7 @@ public class MachineServiceImpl implements MachineService {
                 "Không tìm thấy máy hoặc máy không thuộc phòng lab của bạn."));
 
     String modelName = normalizeModelName(request.modelName());
-    Set<FilmProcess> filmProcesses =
-        resolveProcessesForType(machine.getMachineType(), request.filmProcessIds());
+    Set<FilmProcess> filmProcesses = resolveProcessesForType(machine.getMachineType(), request.filmProcessIds());
 
     if (request.filmFormatIds() == null || request.filmFormatIds().isEmpty()) {
       throw new BusinessException(
@@ -210,9 +210,8 @@ public class MachineServiceImpl implements MachineService {
 
     // Upsert giờ hoạt động theo dayOfWeek để tránh xung đột unique constraint
     // (machine_id, day_of_week)
-    Map<Short, MachineWorkingHour> existingByDay =
-        machine.getWorkingHours().stream()
-            .collect(Collectors.toMap(MachineWorkingHour::getDayOfWeek, Function.identity()));
+    Map<Short, MachineWorkingHour> existingByDay = machine.getWorkingHours().stream()
+        .collect(Collectors.toMap(MachineWorkingHour::getDayOfWeek, Function.identity()));
     Set<Short> requestedDays = new HashSet<>();
     for (MachineWorkingHourRequest item : request.workingHours()) {
       requestedDays.add(item.dayOfWeek());
@@ -294,21 +293,13 @@ public class MachineServiceImpl implements MachineService {
   public MachineIncidentResponse reportIncident(
       Long ownerAccountId, Long machineId, ReportMachineIncidentRequest request) {
     FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
-    Machine machine =
-        machineRepository
-            .findByIdAndFilmLabId(machineId, lab.getId())
-            .orElseThrow(
-                () ->
-                    new BusinessException(
-                        ErrorCode.MACHINE_NOT_FOUND,
-                        "Không tìm thấy máy hoặc máy không thuộc phòng lab của bạn."));
+    Machine machine = requireOwnedMachine(machineId, lab.getId());
 
     String description = normalizeModelName(request.description());
     validateIncidentRequest(request, description);
 
-    final MachineStatus statusBefore = machine.getStatus();
-    MachineStatus statusAfter =
-        request.expectedAvailableAt() != null ? MachineStatus.MAINTENANCE : MachineStatus.DOWN;
+    MachineStatus statusBefore = machine.getStatus();
+    MachineStatus statusAfter = request.expectedAvailableAt() != null ? MachineStatus.MAINTENANCE : MachineStatus.DOWN;
 
     MachineIncident incident = new MachineIncident();
     incident.setMachineId(machine.getId());
@@ -343,6 +334,102 @@ public class MachineServiceImpl implements MachineService {
         rescheduleResult.affectedOrderCount(),
         rescheduleResult.scheduleChanges().size());
 
+    return toIncidentResponse(
+        incident,
+        machine,
+        incident.getMachineStatusAfter(),
+        rescheduleResult.affectedOrderCount(),
+        rescheduleResult.scheduleChanges());
+  }
+
+  @Override
+  @Transactional
+  public MachineIncidentResponse resolveIncident(
+      Long ownerAccountId, Long machineId, Long incidentId) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+    Machine machine = requireOwnedMachine(machineId, lab.getId());
+
+    MachineIncident incident =
+        machineIncidentRepository
+            .findByIdAndMachineId(incidentId, machine.getId())
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.MACHINE_INCIDENT_NOT_FOUND,
+                        "Không tìm thấy bản ghi sự cố của máy này."));
+
+    if (incident.getResolvedAt() != null) {
+      throw new BusinessException(
+          ErrorCode.MACHINE_INCIDENT_ALREADY_RESOLVED,
+          "Sự cố máy #" + incidentId + " đã được đánh dấu khắc phục trước đó.");
+    }
+
+    final MachineStatus statusBefore = machine.getStatus();
+    incident.setResolvedAt(Instant.now());
+    incident = machineIncidentRepository.saveAndFlush(incident);
+
+    MachineStatus resolvedMachineStatus =
+        resolveMachineStatusFromOpenIncidents(
+            machineIncidentRepository.findByMachineIdAndResolvedAtIsNull(machine.getId()));
+    machine.setStatus(resolvedMachineStatus);
+    machine = machineRepository.saveAndFlush(machine);
+
+    List<ScheduleChangeSummaryResponse> scheduleChanges =
+        scheduleChangeRepository.findByMachineIncidentIdOrderByIdAsc(incident.getId()).stream()
+            .map(MachineServiceImpl::toScheduleChangeSummary)
+            .toList();
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.MACHINE_INCIDENT_RESOLVED,
+            AuditTargetType.MACHINE_INCIDENT,
+            incident.getId(),
+            "Khôi phục máy "
+                + machine.getMachineCode()
+                + " sau sự cố #"
+                + incident.getId()
+                + " -> "
+                + machine.getStatus(),
+            toResolvedIncidentSnapshot(machine.getMachineCode(), statusBefore, null),
+            toResolvedIncidentSnapshot(
+                machine.getMachineCode(), machine.getStatus(), incident.getResolvedAt())));
+
+    log.info(
+        "Giải quyết sự cố máy thành công: incidentId={}, machineId={}, machineStatus={}",
+        incident.getId(),
+        machine.getId(),
+        machine.getStatus());
+
+    return toIncidentResponse(
+        incident, machine, machine.getStatus(), scheduleChanges.size(), scheduleChanges);
+  }
+
+  private Machine requireOwnedMachine(Long machineId, Long labId) {
+    return machineRepository
+        .findByIdAndFilmLabId(machineId, labId)
+        .orElseThrow(
+            () ->
+                new BusinessException(
+                    ErrorCode.MACHINE_NOT_FOUND,
+                    "Không tìm thấy máy hoặc máy không thuộc phòng lab của bạn."));
+  }
+
+  private static MachineStatus resolveMachineStatusFromOpenIncidents(
+      List<MachineIncident> openIncidents) {
+    if (openIncidents == null || openIncidents.isEmpty()) {
+      return MachineStatus.ACTIVE;
+    }
+    boolean hasUnboundedDowntime =
+        openIncidents.stream().anyMatch(open -> open.getExpectedAvailableAt() == null);
+    return hasUnboundedDowntime ? MachineStatus.DOWN : MachineStatus.MAINTENANCE;
+  }
+
+  private static MachineIncidentResponse toIncidentResponse(
+      MachineIncident incident,
+      Machine machine,
+      MachineStatus machineStatusAfter,
+      int affectedOrderCount,
+      List<ScheduleChangeSummaryResponse> scheduleChanges) {
     return new MachineIncidentResponse(
         incident.getId(),
         machine.getId(),
@@ -351,12 +438,32 @@ public class MachineServiceImpl implements MachineService {
         incident.getDescription(),
         incident.getUnavailableFrom(),
         incident.getExpectedAvailableAt(),
-        incident.getMachineStatusAfter(),
+        machineStatusAfter,
         incident.getReportedByAccountId(),
         incident.getResolvedAt(),
-        rescheduleResult.affectedOrderCount(),
-        rescheduleResult.scheduleChanges(),
+        affectedOrderCount,
+        scheduleChanges,
         incident.getCreatedAt());
+  }
+
+  private static ScheduleChangeSummaryResponse toScheduleChangeSummary(ScheduleChange change) {
+    return new ScheduleChangeSummaryResponse(
+        change.getId(),
+        change.getServiceOrderId(),
+        change.getStepApplied(),
+        change.getOldPromisedAt(),
+        change.getNewPromisedAt(),
+        change.isRequiresResponse(),
+        change.getResponseDueAt());
+  }
+
+  private static Map<String, Object> toResolvedIncidentSnapshot(
+      String machineCode, MachineStatus machineStatus, Instant resolvedAt) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("machineCode", machineCode);
+    snapshot.put("machineStatus", machineStatus.name());
+    snapshot.put("resolvedAt", resolvedAt != null ? resolvedAt.toString() : null);
+    return snapshot;
   }
 
   private void validateIncidentRequest(
@@ -375,10 +482,9 @@ public class MachineServiceImpl implements MachineService {
   }
 
   private RescheduleResult rescheduleAffectedOrders(Long labId, MachineIncident incident) {
-    LocalDate fromDate =
-        incident.getUnavailableFrom().atZone(CapacitySchedulingEngine.VIETNAM_ZONE).toLocalDate();
-    List<OrderCapacityAllocation> affectedSlice =
-        orderCapacityAllocationRepository.findByFilmLabIdAndWorkDateGreaterThanEqual(
+    LocalDate fromDate = incident.getUnavailableFrom().atZone(CapacitySchedulingEngine.VIETNAM_ZONE).toLocalDate();
+    List<OrderCapacityAllocation> affectedSlice = orderCapacityAllocationRepository
+        .findByFilmLabIdAndWorkDateGreaterThanEqual(
             labId, fromDate);
     if (affectedSlice.isEmpty()) {
       return new RescheduleResult(0, List.of());
@@ -391,16 +497,15 @@ public class MachineServiceImpl implements MachineService {
           .add(allocation);
     }
 
-    List<ServiceOrder> candidateOrders =
-        serviceOrderRepository.findAllById(sliceByOrderId.keySet());
+    List<ServiceOrder> candidateOrders = serviceOrderRepository.findAllById(sliceByOrderId.keySet());
     List<AffectedOrderPlan> plans = new ArrayList<>();
     for (ServiceOrder order : candidateOrders) {
       if (order.getStatus() != ServiceOrderStatus.IN_PROCESSING
           || order.getPromisedReturnAt() == null) {
         continue;
       }
-      List<OrderCapacityAllocation> currentAllocations =
-          orderCapacityAllocationRepository.findByServiceOrderIdOrderByWorkDateAsc(order.getId());
+      List<OrderCapacityAllocation> currentAllocations = orderCapacityAllocationRepository
+          .findByServiceOrderIdOrderByWorkDateAsc(order.getId());
       if (currentAllocations == null || currentAllocations.isEmpty()) {
         currentAllocations = sliceByOrderId.getOrDefault(order.getId(), List.of());
       }
@@ -414,11 +519,11 @@ public class MachineServiceImpl implements MachineService {
       return new RescheduleResult(0, List.of());
     }
 
-    // BR-61: ưu tiên đơn EXPRESS trước, sau đó STANDARD; cùng hạng sắp FIFO theo orderReceivedAt
+    // BR-61: ưu tiên đơn EXPRESS trước, sau đó STANDARD; cùng hạng sắp FIFO theo
+    // orderReceivedAt
     plans.sort(
         Comparator.comparingInt(
-                (AffectedOrderPlan p) ->
-                    p.order().getServiceTier() == ServiceTier.EXPRESS ? 0 : 1)
+            (AffectedOrderPlan p) -> p.order().getServiceTier() == ServiceTier.EXPRESS ? 0 : 1)
             .thenComparing(AffectedOrderPlan::receivedAt)
             .thenComparing(p -> p.order().getId()));
 
@@ -441,9 +546,8 @@ public class MachineServiceImpl implements MachineService {
   private ScheduleChangeSummaryResponse rescheduleSingleOrder(
       Long labId, MachineIncident incident, AffectedOrderPlan plan) {
     ServiceOrder order = plan.order();
-    CapacityRequest capacityRequest =
-        new CapacityRequest(
-            order.getId(), labId, order.getServiceTier(), plan.receivedAt(), plan.rollGroups());
+    CapacityRequest capacityRequest = new CapacityRequest(
+        order.getId(), labId, order.getServiceTier(), plan.receivedAt(), plan.rollGroups());
     CapacityProposal proposal = capacitySchedulingService.propose(capacityRequest);
 
     if (!proposal.feasible()) {
@@ -451,8 +555,8 @@ public class MachineServiceImpl implements MachineService {
       return null;
     }
 
-    List<OrderCapacityAllocation> newAllocations =
-        buildAllocations(order, labId, plan.receivedAt(), proposal.allocations());
+    List<OrderCapacityAllocation> newAllocations = buildAllocations(order, labId, plan.receivedAt(),
+        proposal.allocations());
     if (!newAllocations.isEmpty()) {
       orderCapacityAllocationRepository.saveAllAndFlush(newAllocations);
     }
@@ -463,10 +567,9 @@ public class MachineServiceImpl implements MachineService {
       return null;
     }
 
-    boolean requiresResponse =
-        proposal.tierCommitmentAt() != null && newPromisedAt.isAfter(proposal.tierCommitmentAt());
-    Instant responseDueAt =
-        requiresResponse ? Instant.now().plus(CUSTOMER_RESPONSE_WINDOW) : null;
+    boolean requiresResponse = proposal.tierCommitmentAt() != null
+        && newPromisedAt.isAfter(proposal.tierCommitmentAt());
+    Instant responseDueAt = requiresResponse ? Instant.now().plus(CUSTOMER_RESPONSE_WINDOW) : null;
 
     ScheduleChange change = new ScheduleChange();
     change.setServiceOrderId(order.getId());
@@ -482,22 +585,14 @@ public class MachineServiceImpl implements MachineService {
         new PromisedDateChangedEvent(
             order.getId(), incident.getId(), oldPromisedAt, newPromisedAt, requiresResponse));
 
-    return new ScheduleChangeSummaryResponse(
-        change.getId(),
-        change.getServiceOrderId(),
-        change.getStepApplied(),
-        change.getOldPromisedAt(),
-        change.getNewPromisedAt(),
-        change.isRequiresResponse(),
-        change.getResponseDueAt());
+    return toScheduleChangeSummary(change);
   }
 
   private static AffectedOrderPlan toAffectedOrderPlan(
       ServiceOrder order, List<OrderCapacityAllocation> currentAllocations) {
     Instant receivedAt = currentAllocations.getFirst().getOrderReceivedAt();
     if (receivedAt == null) {
-      receivedAt =
-          order.getPriceLockedAt() != null ? order.getPriceLockedAt() : order.getCreatedAt();
+      receivedAt = order.getPriceLockedAt() != null ? order.getPriceLockedAt() : order.getCreatedAt();
     }
 
     Map<List<Long>, Integer> rollCountsByGroup = new LinkedHashMap<>();
@@ -510,16 +605,14 @@ public class MachineServiceImpl implements MachineService {
       copies.add(copyAllocation(existing));
     }
 
-    List<RollGroup> rollGroups =
-        rollCountsByGroup.entrySet().stream()
-            .map(
-                entry ->
-                    new RollGroup(
-                        entry.getKey().get(0),
-                        entry.getKey().get(1),
-                        entry.getValue(),
-                        DEFAULT_FRAMES_PER_ROLL))
-            .toList();
+    List<RollGroup> rollGroups = rollCountsByGroup.entrySet().stream()
+        .map(
+            entry -> new RollGroup(
+                entry.getKey().get(0),
+                entry.getKey().get(1),
+                entry.getValue(),
+                DEFAULT_FRAMES_PER_ROLL))
+        .toList();
 
     return new AffectedOrderPlan(order, receivedAt, rollGroups, copies);
   }
@@ -583,10 +676,12 @@ public class MachineServiceImpl implements MachineService {
       ServiceOrder order,
       Instant receivedAt,
       List<RollGroup> rollGroups,
-      List<OrderCapacityAllocation> originalCopies) {}
+      List<OrderCapacityAllocation> originalCopies) {
+  }
 
   private record RescheduleResult(
-      int affectedOrderCount, List<ScheduleChangeSummaryResponse> scheduleChanges) {}
+      int affectedOrderCount, List<ScheduleChangeSummaryResponse> scheduleChanges) {
+  }
 
   private Set<FilmProcess> resolveProcessesForType(
       MachineType machineType, Set<Long> filmProcessIds) {

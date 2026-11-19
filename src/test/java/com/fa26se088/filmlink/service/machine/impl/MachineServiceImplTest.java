@@ -662,6 +662,102 @@ class MachineServiceImplTest {
     verify(machineIncidentRepository, never()).saveAndFlush(any());
   }
 
+  @Test
+  @DisplayName(
+      "TC-SM04-06: Giải quyết sự cố thành công -> resolvedAt != null, máy khôi phục ACTIVE, ghi audit MACHINE_INCIDENT_RESOLVED")
+  void resolveIncident_success_restoresMachineActiveAndRecordsAudit() {
+    FilmLab lab = createLab(10L, 100L);
+    when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
+
+    Machine p1 = new Machine();
+    ReflectionTestUtils.setField(p1, "id", 1L);
+    p1.setFilmLabId(10L);
+    p1.setMachineCode("P1");
+    p1.setStatus(MachineStatus.MAINTENANCE);
+    when(machineRepository.findByIdAndFilmLabId(1L, 10L)).thenReturn(Optional.of(p1));
+    when(machineRepository.saveAndFlush(any(Machine.class))).thenAnswer(inv -> inv.getArgument(0));
+
+    MachineIncident incident = new MachineIncident();
+    ReflectionTestUtils.setField(incident, "id", 88L);
+    incident.setMachineId(1L);
+    incident.setCause(MachineIncidentCause.MACHINE_FAILURE);
+    incident.setDescription("Hỏng motor kéo phim P1");
+    incident.setUnavailableFrom(Instant.parse("2026-11-18T01:00:00Z"));
+    incident.setExpectedAvailableAt(Instant.parse("2026-11-19T01:00:00Z"));
+    incident.setMachineStatusAfter(MachineStatus.MAINTENANCE);
+    incident.setReportedByAccountId(100L);
+    when(machineIncidentRepository.findByIdAndMachineId(88L, 1L)).thenReturn(Optional.of(incident));
+    when(machineIncidentRepository.saveAndFlush(any(MachineIncident.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+    when(machineIncidentRepository.findByMachineIdAndResolvedAtIsNull(1L)).thenReturn(List.of());
+    when(scheduleChangeRepository.findByMachineIncidentIdOrderByIdAsc(88L)).thenReturn(List.of());
+
+    MachineIncidentResponse response = machineService.resolveIncident(100L, 1L, 88L);
+
+    assertThat(response.id()).isEqualTo(88L);
+    assertThat(response.machineId()).isEqualTo(1L);
+    assertThat(response.resolvedAt()).isNotNull();
+    assertThat(response.machineStatusAfter()).isEqualTo(MachineStatus.ACTIVE);
+    assertThat(p1.getStatus()).isEqualTo(MachineStatus.ACTIVE);
+
+    ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+    verify(auditLogService).recordSuccess(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().action()).isEqualTo(AuditAction.MACHINE_INCIDENT_RESOLVED);
+    assertThat(auditCaptor.getValue().targetType())
+        .isEqualTo(AuditTargetType.MACHINE_INCIDENT);
+    assertThat(auditCaptor.getValue().targetId()).isEqualTo(88L);
+  }
+
+  @Test
+  @DisplayName(
+      "Giải quyết sự cố đã được khắc phục trước đó -> ném 409 MACHINE_INCIDENT_ALREADY_RESOLVED")
+  void resolveIncident_alreadyResolved_throwsConflict() {
+    FilmLab lab = createLab(10L, 100L);
+    when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
+
+    Machine p1 = new Machine();
+    ReflectionTestUtils.setField(p1, "id", 1L);
+    p1.setFilmLabId(10L);
+    p1.setMachineCode("P1");
+    p1.setStatus(MachineStatus.ACTIVE);
+    when(machineRepository.findByIdAndFilmLabId(1L, 10L)).thenReturn(Optional.of(p1));
+
+    MachineIncident incident = new MachineIncident();
+    ReflectionTestUtils.setField(incident, "id", 88L);
+    incident.setMachineId(1L);
+    incident.setResolvedAt(Instant.parse("2026-11-18T10:00:00Z"));
+    when(machineIncidentRepository.findByIdAndMachineId(88L, 1L)).thenReturn(Optional.of(incident));
+
+    assertThatThrownBy(() -> machineService.resolveIncident(100L, 1L, 88L))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.MACHINE_INCIDENT_ALREADY_RESOLVED));
+
+    verify(machineIncidentRepository, never()).saveAndFlush(any());
+  }
+
+  @Test
+  @DisplayName("Giải quyết sự cố không tồn tại hoặc không thuộc máy -> ném 404 MACHINE_INCIDENT_NOT_FOUND")
+  void resolveIncident_notFound_throwsNotFound() {
+    FilmLab lab = createLab(10L, 100L);
+    when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
+
+    Machine p1 = new Machine();
+    ReflectionTestUtils.setField(p1, "id", 1L);
+    p1.setFilmLabId(10L);
+    p1.setMachineCode("P1");
+    p1.setStatus(MachineStatus.MAINTENANCE);
+    when(machineRepository.findByIdAndFilmLabId(1L, 10L)).thenReturn(Optional.of(p1));
+    when(machineIncidentRepository.findByIdAndMachineId(999L, 1L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> machineService.resolveIncident(100L, 1L, 999L))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.MACHINE_INCIDENT_NOT_FOUND));
+
+    verify(machineIncidentRepository, never()).saveAndFlush(any());
+  }
+
   private ServiceOrder createInProcessingOrder(
       Long orderId, Long labId, ServiceTier tier, Instant promisedReturnAt) {
     ServiceOrder order = new ServiceOrder();
