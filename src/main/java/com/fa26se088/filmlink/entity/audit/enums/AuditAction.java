@@ -52,6 +52,9 @@ public enum AuditAction {
   /** UC68: Film Lab Owner cập nhật cấu hình máy tráng / máy scan. */
   MACHINE_UPDATED,
 
+  /** UC68: Film Lab Owner cập nhật cấu hình tham số lập lịch (qcBufferHours, expressDailyCapPercent, expressCommitmentWorkingDays). */
+  LAB_SCHEDULING_SETTINGS_UPDATED,
+
   // --- order ---
   /** UC20: Photographer tạo Service Order; after ghi mã đơn, lab, trạng thái, tổng tạm tính. */
   ORDER_CREATED,

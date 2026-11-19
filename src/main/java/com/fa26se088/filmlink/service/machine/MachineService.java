@@ -2,7 +2,9 @@ package com.fa26se088.filmlink.service.machine;
 
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
+import com.fa26se088.filmlink.dto.machine.request.UpdateSchedulingSettingsRequest;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
+import com.fa26se088.filmlink.dto.machine.response.SchedulingSettingsResponse;
 import java.util.List;
 
 /**
@@ -41,4 +43,15 @@ public interface MachineService {
    */
   MachineResponse updateMachine(
       Long ownerAccountId, Long machineId, UpdateMachineRequest request);
+
+  /**
+   * Cập nhật tham số lập lịch tự động (qcBufferHours, expressDailyCapPercent,
+   * expressCommitmentWorkingDays) của lab thuộc chủ tài khoản đang đăng nhập (UC68, BR-60, BR-61).
+   *
+   * @param ownerAccountId ID tài khoản FILM_LAB_OWNER đang đăng nhập
+   * @param request thông tin cấu hình tham số lập lịch mới
+   * @return thông tin tham số lập lịch sau khi cập nhật
+   */
+  SchedulingSettingsResponse updateSchedulingSettings(
+      Long ownerAccountId, UpdateSchedulingSettingsRequest request);
 }

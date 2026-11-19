@@ -4,7 +4,9 @@ import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.MachineWorkingHourRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
+import com.fa26se088.filmlink.dto.machine.request.UpdateSchedulingSettingsRequest;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
+import com.fa26se088.filmlink.dto.machine.response.SchedulingSettingsResponse;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
@@ -39,7 +41,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Triển khai nghiệp vụ quản lý thiết bị máy tráng, máy scan và công suất ngày cho Film Lab Owner
+ * Triển khai nghiệp vụ quản lý thiết bị máy tráng, máy scan và công suất ngày
+ * cho Film Lab Owner
  * (UC68, FA26-72).
  */
 @Slf4j
@@ -83,8 +86,7 @@ public class MachineServiceImpl implements MachineService {
     }
 
     String modelName = normalizeModelName(request.modelName());
-    Set<FilmProcess> filmProcesses =
-        resolveProcessesForType(request.machineType(), request.filmProcessIds());
+    Set<FilmProcess> filmProcesses = resolveProcessesForType(request.machineType(), request.filmProcessIds());
 
     if (request.filmFormatIds() == null || request.filmFormatIds().isEmpty()) {
       throw new BusinessException(
@@ -146,14 +148,12 @@ public class MachineServiceImpl implements MachineService {
   public MachineResponse updateMachine(
       Long ownerAccountId, Long machineId, UpdateMachineRequest request) {
     FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
-    Machine machine =
-        machineRepository
-            .findByIdAndFilmLabId(machineId, lab.getId())
-            .orElseThrow(
-                () ->
-                    new BusinessException(
-                        ErrorCode.MACHINE_NOT_FOUND,
-                        "Không tìm thấy máy hoặc máy không thuộc phòng lab của bạn."));
+    Machine machine = machineRepository
+        .findByIdAndFilmLabId(machineId, lab.getId())
+        .orElseThrow(
+            () -> new BusinessException(
+                ErrorCode.MACHINE_NOT_FOUND,
+                "Không tìm thấy máy hoặc máy không thuộc phòng lab của bạn."));
 
     String modelName = normalizeModelName(request.modelName());
     Set<FilmProcess> filmProcesses =
@@ -174,7 +174,8 @@ public class MachineServiceImpl implements MachineService {
     machine.setFilmProcesses(filmProcesses);
     machine.setFilmFormats(filmFormats);
 
-    // Upsert giờ hoạt động theo dayOfWeek để tránh xung đột unique constraint (machine_id, day_of_week)
+    // Upsert giờ hoạt động theo dayOfWeek để tránh xung đột unique constraint
+    // (machine_id, day_of_week)
     Map<Short, MachineWorkingHour> existingByDay =
         machine.getWorkingHours().stream()
             .collect(Collectors.toMap(MachineWorkingHour::getDayOfWeek, Function.identity()));
@@ -217,6 +218,41 @@ public class MachineServiceImpl implements MachineService {
         machine.getCapacityPerHour());
 
     return machineMapper.toResponse(machine);
+  }
+
+  @Override
+  @Transactional
+  public SchedulingSettingsResponse updateSchedulingSettings(
+      Long ownerAccountId, UpdateSchedulingSettingsRequest request) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+
+    Map<String, Object> beforeSnapshot = toSchedulingSettingsSnapshot(lab);
+
+    lab.setQcBufferHours(request.qcBufferHours());
+    lab.setExpressDailyCapPercent(request.expressDailyCapPercent());
+    lab.setExpressCommitmentWorkingDays(request.expressCommitmentWorkingDays());
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.LAB_SCHEDULING_SETTINGS_UPDATED,
+            AuditTargetType.FILM_LAB,
+            lab.getId(),
+            "Cập nhật tham số lập lịch tự động của Film Lab #" + lab.getId(),
+            beforeSnapshot,
+            toSchedulingSettingsSnapshot(lab)));
+
+    log.info(
+        "Cập nhật tham số lập lịch labId={}: qcBufferHours={}, expressCapPercent={}, expressDays={}",
+        lab.getId(),
+        lab.getQcBufferHours(),
+        lab.getExpressDailyCapPercent(),
+        lab.getExpressCommitmentWorkingDays());
+
+    return new SchedulingSettingsResponse(
+        lab.getId(),
+        lab.getQcBufferHours(),
+        lab.getExpressDailyCapPercent(),
+        lab.getExpressCommitmentWorkingDays());
   }
 
   private Set<FilmProcess> resolveProcessesForType(
@@ -268,6 +304,14 @@ public class MachineServiceImpl implements MachineService {
     snapshot.put("modelName", machine.getModelName());
     snapshot.put("capacityPerHour", machine.getCapacityPerHour());
     snapshot.put("status", machine.getStatus().name());
+    return snapshot;
+  }
+
+  private static Map<String, Object> toSchedulingSettingsSnapshot(FilmLab lab) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("qcBufferHours", lab.getQcBufferHours());
+    snapshot.put("expressDailyCapPercent", lab.getExpressDailyCapPercent());
+    snapshot.put("expressCommitmentWorkingDays", lab.getExpressCommitmentWorkingDays());
     return snapshot;
   }
 

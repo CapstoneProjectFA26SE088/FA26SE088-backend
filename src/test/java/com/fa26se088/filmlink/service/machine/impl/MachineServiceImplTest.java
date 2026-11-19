@@ -11,7 +11,9 @@ import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.MachineWorkingHourRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
+import com.fa26se088.filmlink.dto.machine.request.UpdateSchedulingSettingsRequest;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
+import com.fa26se088.filmlink.dto.machine.response.SchedulingSettingsResponse;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
@@ -335,6 +337,38 @@ class MachineServiceImplTest {
             ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.MACHINE_NOT_FOUND));
 
     verify(machineRepository, never()).saveAndFlush(any());
+  }
+
+  @Test
+  @DisplayName(
+      "Cập nhật tham số lập lịch tự động (qcBufferHours, expressDailyCapPercent, expressCommitmentWorkingDays) thành công -> ghi audit")
+  void updateSchedulingSettings_success() {
+    FilmLab lab = createLab(10L, 100L);
+    lab.setQcBufferHours((short) 4);
+    lab.setExpressDailyCapPercent(null);
+    lab.setExpressCommitmentWorkingDays(null);
+    when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
+
+    UpdateSchedulingSettingsRequest request =
+        new UpdateSchedulingSettingsRequest((short) 6, (short) 25, (short) 1);
+
+    SchedulingSettingsResponse response = machineService.updateSchedulingSettings(100L, request);
+
+    assertThat(response.filmLabId()).isEqualTo(10L);
+    assertThat(response.qcBufferHours()).isEqualTo((short) 6);
+    assertThat(response.expressDailyCapPercent()).isEqualTo((short) 25);
+    assertThat(response.expressCommitmentWorkingDays()).isEqualTo((short) 1);
+
+    assertThat(lab.getQcBufferHours()).isEqualTo((short) 6);
+    assertThat(lab.getExpressDailyCapPercent()).isEqualTo((short) 25);
+    assertThat(lab.getExpressCommitmentWorkingDays()).isEqualTo((short) 1);
+
+    ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+    verify(auditLogService).recordSuccess(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().action())
+        .isEqualTo(AuditAction.LAB_SCHEDULING_SETTINGS_UPDATED);
+    assertThat(auditCaptor.getValue().targetType()).isEqualTo(AuditTargetType.FILM_LAB);
+    assertThat(auditCaptor.getValue().targetId()).isEqualTo(10L);
   }
 
   private FilmLab createLab(Long labId, Long ownerAccountId) {

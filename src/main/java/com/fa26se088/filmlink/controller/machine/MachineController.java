@@ -2,7 +2,9 @@ package com.fa26se088.filmlink.controller.machine;
 
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
+import com.fa26se088.filmlink.dto.machine.request.UpdateSchedulingSettingsRequest;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
+import com.fa26se088.filmlink.dto.machine.response.SchedulingSettingsResponse;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.machine.MachineService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -23,11 +25,11 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Controller cho phép Film Lab Owner quản lý thiết bị máy tráng, máy scan và xem công suất tính
- * toán theo ngày (UC68, FA26-72).
+ * Controller cho phép Film Lab Owner quản lý thiết bị máy tráng, máy scan, công suất tính toán
+ * theo ngày và tham số lập lịch tự động (UC68, FA26-72).
  */
 @RestController
-@RequestMapping("/api/v1/film-labs/me/machines")
+@RequestMapping("/api/v1/film-labs/me")
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('FILM_LAB_OWNER')")
 @Tag(
@@ -38,7 +40,7 @@ public class MachineController {
   private final MachineService machineService;
 
   /** Lấy danh sách máy của lab kèm công suất tính toán theo ngày (UC68). */
-  @GetMapping
+  @GetMapping("/machines")
   @Operation(summary = "Lấy danh sách máy của lab kèm công suất tính toán theo ngày (UC68)")
   public List<MachineResponse> getMyMachines(
       @AuthenticationPrincipal AuthenticatedAccount account) {
@@ -46,7 +48,7 @@ public class MachineController {
   }
 
   /** Khai báo máy tráng (PROCESSOR) hoặc máy scan (SCANNER) mới cho lab (UC68, FA26-72). */
-  @PostMapping
+  @PostMapping("/machines")
   @ResponseStatus(HttpStatus.CREATED)
   @Operation(summary = "Khai báo máy tráng (PROCESSOR) hoặc máy scan (SCANNER) mới cho lab (UC68)")
   public MachineResponse createMachine(
@@ -56,7 +58,7 @@ public class MachineController {
   }
 
   /** Cập nhật thông tin cấu hình máy (modelName, capacityPerHour, quy trình, khổ phim, giờ hoạt động) (UC68). */
-  @PutMapping("/{id}")
+  @PutMapping("/machines/{id}")
   @Operation(
       summary =
           "Cập nhật thông tin máy của lab (không sửa machineCode và machineType, tính lại công suất)")
@@ -65,5 +67,16 @@ public class MachineController {
       @PathVariable Long id,
       @Valid @RequestBody UpdateMachineRequest request) {
     return machineService.updateMachine(account.id(), id, request);
+  }
+
+  /** Cập nhật cấu hình tham số lập lịch tự động của lab (qcBufferHours, expressDailyCapPercent, expressCommitmentWorkingDays) (UC68). */
+  @PutMapping("/scheduling-settings")
+  @Operation(
+      summary =
+          "Cập nhật tham số lập lịch tự động của lab (qcBufferHours, expressDailyCapPercent, expressCommitmentWorkingDays)")
+  public SchedulingSettingsResponse updateSchedulingSettings(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @Valid @RequestBody UpdateSchedulingSettingsRequest request) {
+    return machineService.updateSchedulingSettings(account.id(), request);
   }
 }

@@ -403,6 +403,59 @@ class MachineControllerIntegrationTest {
   }
 
   @Test
+  @DisplayName(
+      "Film Lab Owner cập nhật scheduling-settings -> 200 OK, lưu qcBufferHours, expressDailyCapPercent, expressCommitmentWorkingDays, ghi audit")
+  void updateSchedulingSettings_asLabOwner_success_returns200() throws Exception {
+    String requestBody =
+        """
+        {
+          "qcBufferHours": 6,
+          "expressDailyCapPercent": 25,
+          "expressCommitmentWorkingDays": 1
+        }
+        """;
+
+    mockMvc
+        .perform(
+            put("/api/v1/film-labs/me/scheduling-settings")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.filmLabId", is(labId.intValue())))
+        .andExpect(jsonPath("$.qcBufferHours", is(6)))
+        .andExpect(jsonPath("$.expressDailyCapPercent", is(25)))
+        .andExpect(jsonPath("$.expressCommitmentWorkingDays", is(1)));
+
+    FilmLab updatedLab = filmLabRepository.findById(labId).orElseThrow();
+    assertThat(updatedLab.getQcBufferHours()).isEqualTo((short) 6);
+    assertThat(updatedLab.getExpressDailyCapPercent()).isEqualTo((short) 25);
+    assertThat(updatedLab.getExpressCommitmentWorkingDays()).isEqualTo((short) 1);
+  }
+
+  @Test
+  @DisplayName("Cập nhật scheduling-settings với giá trị ngoài miền cho phép -> 400 Bad Request")
+  void updateSchedulingSettings_invalidValues_returns400() throws Exception {
+    String requestBody =
+        """
+        {
+          "qcBufferHours": 100,
+          "expressDailyCapPercent": 150,
+          "expressCommitmentWorkingDays": 5
+        }
+        """;
+
+    mockMvc
+        .perform(
+            put("/api/v1/film-labs/me/scheduling-settings")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errorCode", is("VALIDATION_ERROR")));
+  }
+
+  @Test
   @DisplayName("Chưa đăng nhập gọi API máy của lab -> 401 Unauthorized")
   void getMyMachines_unauthenticated_returns401() throws Exception {
     mockMvc.perform(get(API_PATH)).andExpect(status().isUnauthorized());

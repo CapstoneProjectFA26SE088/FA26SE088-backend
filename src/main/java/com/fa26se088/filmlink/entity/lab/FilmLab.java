@@ -66,4 +66,8 @@ public class FilmLab extends BaseEntity {
   /** BR-61: tỉ lệ tối đa đơn Express mỗi ngày; {@code null} = không giới hạn. */
   @Column(name = "express_daily_cap_percent")
   private Short expressDailyCapPercent;
+
+  /** UC68 / UC69: số ngày làm việc cam kết cho đơn Express (1 hoặc 2); {@code null} = mặc định sàn. */
+  @Column(name = "express_commitment_working_days")
+  private Short expressCommitmentWorkingDays;
 }
