@@ -1,6 +1,7 @@
 package com.fa26se088.filmlink.service.machine;
 
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
+import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
 import java.util.List;
 
@@ -28,4 +29,16 @@ public interface MachineService {
    * @return thông tin máy vừa tạo ở trạng thái ACTIVE kèm công suất tính toán theo ngày
    */
   MachineResponse createMachine(Long ownerAccountId, CreateMachineRequest request);
+
+  /**
+   * Cập nhật thông tin cấu hình máy (modelName, capacityPerHour, quy trình, khổ phim, giờ hoạt
+   * động) của lab thuộc chủ tài khoản đang đăng nhập (UC68).
+   *
+   * @param ownerAccountId ID tài khoản FILM_LAB_OWNER đang đăng nhập
+   * @param machineId ID của máy cần cập nhật
+   * @param request thông tin cấu hình mới (không sửa được machineCode và machineType)
+   * @return thông tin máy sau khi cập nhật kèm công suất tính toán lại theo ngày
+   */
+  MachineResponse updateMachine(
+      Long ownerAccountId, Long machineId, UpdateMachineRequest request);
 }

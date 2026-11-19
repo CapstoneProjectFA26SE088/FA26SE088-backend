@@ -3,6 +3,7 @@ package com.fa26se088.filmlink.service.machine.impl;
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.MachineWorkingHourRequest;
+import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
@@ -25,9 +26,12 @@ import com.fa26se088.filmlink.service.lab.LabAccessService;
 import com.fa26se088.filmlink.service.machine.MachineService;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -78,34 +82,16 @@ public class MachineServiceImpl implements MachineService {
           "Mã máy " + trimmedCode + " đã tồn tại trong phòng lab của bạn.");
     }
 
-    String modelName =
-        (request.modelName() != null && !request.modelName().isBlank())
-            ? request.modelName().trim()
-            : null;
+    String modelName = normalizeModelName(request.modelName());
+    Set<FilmProcess> filmProcesses =
+        resolveProcessesForType(request.machineType(), request.filmProcessIds());
 
-    // Kiểm tra quy trình tráng (PROCESSOR bắt buộc >= 1 quy trình ACTIVE)
-    Set<FilmProcess> filmProcesses;
-    if (request.machineType() == MachineType.PROCESSOR) {
-      if (request.filmProcessIds() == null || request.filmProcessIds().isEmpty()) {
-        throw new BusinessException(
-            ErrorCode.VALIDATION_ERROR,
-            "Máy tráng (PROCESSOR) bắt buộc phải chọn ít nhất một quy trình tráng.");
-      }
-      filmProcesses = validateActiveProcesses(request.filmProcessIds());
-    } else if (request.filmProcessIds() != null && !request.filmProcessIds().isEmpty()) {
-      filmProcesses = validateActiveProcesses(request.filmProcessIds());
-    } else {
-      filmProcesses = Collections.emptySet();
-    }
-
-    // Kiểm tra khổ phim (cả PROCESSOR và SCANNER bắt buộc >= 1 khổ phim ACTIVE)
     if (request.filmFormatIds() == null || request.filmFormatIds().isEmpty()) {
       throw new BusinessException(
           ErrorCode.VALIDATION_ERROR, "Phải chọn ít nhất một khổ phim hỗ trợ.");
     }
     Set<FilmFormat> filmFormats = validateActiveFormats(request.filmFormatIds());
 
-    // Kiểm tra cấu hình giờ hoạt động theo ngày trong tuần
     validateWorkingHours(request.workingHours());
 
     Machine machine = new Machine();
@@ -143,11 +129,7 @@ public class MachineServiceImpl implements MachineService {
             machine.getId(),
             "Khai báo máy mới: " + machine.getMachineCode() + " (" + machine.getMachineType() + ")",
             null,
-            Map.of(
-                "machineCode", machine.getMachineCode(),
-                "machineType", machine.getMachineType().name(),
-                "capacityPerHour", machine.getCapacityPerHour(),
-                "status", machine.getStatus().name())));
+            toSnapshot(machine)));
 
     log.info(
         "Khai báo máy thành công: id={}, labId={}, code={}, type={}",
@@ -157,6 +139,100 @@ public class MachineServiceImpl implements MachineService {
         machine.getMachineType());
 
     return machineMapper.toResponse(machine);
+  }
+
+  @Override
+  @Transactional
+  public MachineResponse updateMachine(
+      Long ownerAccountId, Long machineId, UpdateMachineRequest request) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+    Machine machine =
+        machineRepository
+            .findByIdAndFilmLabId(machineId, lab.getId())
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.MACHINE_NOT_FOUND,
+                        "Không tìm thấy máy hoặc máy không thuộc phòng lab của bạn."));
+
+    String modelName = normalizeModelName(request.modelName());
+    Set<FilmProcess> filmProcesses =
+        resolveProcessesForType(machine.getMachineType(), request.filmProcessIds());
+
+    if (request.filmFormatIds() == null || request.filmFormatIds().isEmpty()) {
+      throw new BusinessException(
+          ErrorCode.VALIDATION_ERROR, "Phải chọn ít nhất một khổ phim hỗ trợ.");
+    }
+    Set<FilmFormat> filmFormats = validateActiveFormats(request.filmFormatIds());
+
+    validateWorkingHours(request.workingHours());
+
+    Map<String, Object> beforeSnapshot = toSnapshot(machine);
+
+    machine.setModelName(modelName);
+    machine.setCapacityPerHour(request.capacityPerHour());
+    machine.setFilmProcesses(filmProcesses);
+    machine.setFilmFormats(filmFormats);
+
+    // Upsert giờ hoạt động theo dayOfWeek để tránh xung đột unique constraint (machine_id, day_of_week)
+    Map<Short, MachineWorkingHour> existingByDay =
+        machine.getWorkingHours().stream()
+            .collect(Collectors.toMap(MachineWorkingHour::getDayOfWeek, Function.identity()));
+    Set<Short> requestedDays = new HashSet<>();
+    for (MachineWorkingHourRequest item : request.workingHours()) {
+      requestedDays.add(item.dayOfWeek());
+      boolean closed = Boolean.TRUE.equals(item.closed());
+      MachineWorkingHour wh = existingByDay.get(item.dayOfWeek());
+      if (wh == null) {
+        wh = new MachineWorkingHour();
+        wh.setDayOfWeek(item.dayOfWeek());
+        machine.addWorkingHour(wh);
+      }
+      wh.setClosed(closed);
+      wh.setOpensAt(closed ? null : item.opensAt());
+      wh.setClosesAt(closed ? null : item.closesAt());
+    }
+    machine.getWorkingHours().removeIf(wh -> !requestedDays.contains(wh.getDayOfWeek()));
+
+    machine = machineRepository.saveAndFlush(machine);
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.MACHINE_UPDATED,
+            AuditTargetType.MACHINE,
+            machine.getId(),
+            "Cập nhật cấu hình máy: "
+                + machine.getMachineCode()
+                + " ("
+                + machine.getMachineType()
+                + ")",
+            beforeSnapshot,
+            toSnapshot(machine)));
+
+    log.info(
+        "Cập nhật máy thành công: id={}, labId={}, code={}, capacityPerHour={}",
+        machine.getId(),
+        lab.getId(),
+        machine.getMachineCode(),
+        machine.getCapacityPerHour());
+
+    return machineMapper.toResponse(machine);
+  }
+
+  private Set<FilmProcess> resolveProcessesForType(
+      MachineType machineType, Set<Long> filmProcessIds) {
+    if (machineType == MachineType.PROCESSOR) {
+      if (filmProcessIds == null || filmProcessIds.isEmpty()) {
+        throw new BusinessException(
+            ErrorCode.VALIDATION_ERROR,
+            "Máy tráng (PROCESSOR) bắt buộc phải chọn ít nhất một quy trình tráng.");
+      }
+      return validateActiveProcesses(filmProcessIds);
+    }
+    if (filmProcessIds != null && !filmProcessIds.isEmpty()) {
+      return validateActiveProcesses(filmProcessIds);
+    }
+    return Collections.emptySet();
   }
 
   private Set<FilmProcess> validateActiveProcesses(Set<Long> ids) {
@@ -179,6 +255,20 @@ public class MachineServiceImpl implements MachineService {
           "Một hoặc nhiều khổ phim không tồn tại hoặc không ở trạng thái ACTIVE.");
     }
     return new HashSet<>(list);
+  }
+
+  private static String normalizeModelName(String modelName) {
+    return (modelName != null && !modelName.isBlank()) ? modelName.trim() : null;
+  }
+
+  private static Map<String, Object> toSnapshot(Machine machine) {
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put("machineCode", machine.getMachineCode());
+    snapshot.put("machineType", machine.getMachineType().name());
+    snapshot.put("modelName", machine.getModelName());
+    snapshot.put("capacityPerHour", machine.getCapacityPerHour());
+    snapshot.put("status", machine.getStatus().name());
+    return snapshot;
   }
 
   private static void validateWorkingHours(List<MachineWorkingHourRequest> workingHours) {

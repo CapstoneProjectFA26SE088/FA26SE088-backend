@@ -5,6 +5,7 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -74,6 +75,7 @@ class MachineControllerIntegrationTest {
   private String ownerToken;
   private String photographerToken;
   private Long labId;
+  private Long savedP1Id;
   private Long activeProcessId;
   private Long activeFormatId;
 
@@ -179,7 +181,7 @@ class MachineControllerIntegrationTest {
     p1.setCapacityPerHour(26);
     p1.setStatus(MachineStatus.ACTIVE);
     addEightHourWorkDays(p1);
-    machineRepository.save(p1);
+    savedP1Id = machineRepository.save(p1).getId();
 
     Machine s1 = new Machine();
     s1.setFilmLabId(labId);
@@ -327,6 +329,77 @@ class MachineControllerIntegrationTest {
                 .content(requestBody))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.errorCode", is("MACHINE_CODE_DUPLICATE")));
+  }
+
+  @Test
+  @DisplayName(
+      "Film Lab Owner cập nhật thông tin máy P1 -> 200 OK, giữ nguyên machineCode, tính lại công suất ngày = 300, ghi audit MACHINE_UPDATED")
+  void updateMachine_asLabOwner_success_returns200AndRecalculatesCapacity() throws Exception {
+    String requestBody =
+        """
+        {
+          "modelName": "Noritsu V30 Turbo",
+          "capacityPerHour": 30,
+          "filmProcessIds": [%d],
+          "filmFormatIds": [%d],
+          "workingHours": [
+            {"dayOfWeek": 1, "closed": false, "opensAt": "08:00", "closesAt": "18:00"},
+            {"dayOfWeek": 2, "closed": false, "opensAt": "08:00", "closesAt": "18:00"},
+            {"dayOfWeek": 3, "closed": true}
+          ]
+        }
+        """
+            .formatted(activeProcessId, activeFormatId);
+
+    mockMvc
+        .perform(
+            put(API_PATH + "/" + savedP1Id)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id", is(savedP1Id.intValue())))
+        .andExpect(jsonPath("$.machineCode", is("P1")))
+        .andExpect(jsonPath("$.modelName", is("Noritsu V30 Turbo")))
+        .andExpect(jsonPath("$.capacityPerHour", is(30)))
+        .andExpect(jsonPath("$.dailyCapacityRolls", is(300)))
+        .andExpect(jsonPath("$.workingHours", hasSize(3)));
+
+    List<AuditLog> logs =
+        auditLogRepository
+            .findAll(
+                AuditLogRepository.byTarget(AuditTargetType.MACHINE, savedP1Id),
+                PageRequest.of(0, 10))
+            .getContent();
+    assertThat(logs).isNotEmpty();
+    assertThat(logs.getFirst().getAction()).isEqualTo(AuditAction.MACHINE_UPDATED);
+  }
+
+  @Test
+  @DisplayName("Cập nhật máy không tồn tại -> 404 Not Found (MACHINE_NOT_FOUND)")
+  void updateMachine_notFound_returns404() throws Exception {
+    String requestBody =
+        """
+        {
+          "modelName": "Not Exist",
+          "capacityPerHour": 25,
+          "filmProcessIds": [%d],
+          "filmFormatIds": [%d],
+          "workingHours": [
+            {"dayOfWeek": 1, "closed": false, "opensAt": "08:00", "closesAt": "16:00"}
+          ]
+        }
+        """
+            .formatted(activeProcessId, activeFormatId);
+
+    mockMvc
+        .perform(
+            put(API_PATH + "/999999")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestBody))
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorCode", is("MACHINE_NOT_FOUND")));
   }
 
   @Test

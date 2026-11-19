@@ -1,6 +1,7 @@
 package com.fa26se088.filmlink.controller.machine;
 
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
+import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.machine.MachineService;
@@ -13,7 +14,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -50,5 +53,17 @@ public class MachineController {
       @AuthenticationPrincipal AuthenticatedAccount account,
       @Valid @RequestBody CreateMachineRequest request) {
     return machineService.createMachine(account.id(), request);
+  }
+
+  /** Cập nhật thông tin cấu hình máy (modelName, capacityPerHour, quy trình, khổ phim, giờ hoạt động) (UC68). */
+  @PutMapping("/{id}")
+  @Operation(
+      summary =
+          "Cập nhật thông tin máy của lab (không sửa machineCode và machineType, tính lại công suất)")
+  public MachineResponse updateMachine(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @Valid @RequestBody UpdateMachineRequest request) {
+    return machineService.updateMachine(account.id(), id, request);
   }
 }

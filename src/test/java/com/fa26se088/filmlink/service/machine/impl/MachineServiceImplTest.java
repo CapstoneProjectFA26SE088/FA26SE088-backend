@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
 import com.fa26se088.filmlink.dto.machine.request.CreateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.request.MachineWorkingHourRequest;
+import com.fa26se088.filmlink.dto.machine.request.UpdateMachineRequest;
 import com.fa26se088.filmlink.dto.machine.response.MachineResponse;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
@@ -32,6 +33,7 @@ import com.fa26se088.filmlink.service.lab.LabAccessService;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -249,6 +251,88 @@ class MachineServiceImplTest {
         .isInstanceOfSatisfying(
             BusinessException.class,
             ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.MACHINE_MASTERDATA_INACTIVE));
+
+    verify(machineRepository, never()).saveAndFlush(any());
+  }
+
+  @Test
+  @DisplayName(
+      "Cập nhật thông tin máy thành công -> giữ nguyên machineCode, tính lại dailyCapacityRolls, ghi audit MACHINE_UPDATED")
+  void updateMachine_success() {
+    FilmLab lab = createLab(10L, 100L);
+    when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
+
+    Machine existing = new Machine();
+    ReflectionTestUtils.setField(existing, "id", 55L);
+    existing.setFilmLabId(10L);
+    existing.setMachineCode("P1");
+    existing.setModelName("Noritsu V30");
+    existing.setMachineType(MachineType.PROCESSOR);
+    existing.setCapacityPerHour(26);
+    existing.setStatus(MachineStatus.ACTIVE);
+    addStandardWeekHours(existing);
+
+    when(machineRepository.findByIdAndFilmLabId(55L, 10L)).thenReturn(Optional.of(existing));
+
+    FilmProcess c41 = new FilmProcess();
+    ReflectionTestUtils.setField(c41, "id", 1L);
+    c41.setStatus(CatalogStatus.ACTIVE);
+    when(filmProcessRepository.findAllById(Set.of(1L))).thenReturn(List.of(c41));
+
+    FilmFormat f35 = new FilmFormat();
+    ReflectionTestUtils.setField(f35, "id", 1L);
+    f35.setStatus(CatalogStatus.ACTIVE);
+    when(filmFormatRepository.findAllById(Set.of(1L))).thenReturn(List.of(f35));
+
+    when(machineRepository.saveAndFlush(any(Machine.class)))
+        .thenAnswer(inv -> inv.getArgument(0));
+
+    UpdateMachineRequest request =
+        new UpdateMachineRequest(
+            "Noritsu V30 Pro",
+            30,
+            Set.of(1L),
+            Set.of(1L),
+            List.of(
+                new MachineWorkingHourRequest(
+                    (short) 1, false, LocalTime.of(8, 0), LocalTime.of(18, 0)),
+                new MachineWorkingHourRequest((short) 2, true, null, null)));
+
+    MachineResponse response = machineService.updateMachine(100L, 55L, request);
+
+    assertThat(response.id()).isEqualTo(55L);
+    assertThat(response.machineCode()).isEqualTo("P1");
+    assertThat(response.modelName()).isEqualTo("Noritsu V30 Pro");
+    assertThat(response.capacityPerHour()).isEqualTo(30);
+    assertThat(response.dailyCapacityRolls()).isEqualTo(300);
+    assertThat(response.workingHours()).hasSize(2);
+
+    ArgumentCaptor<AuditEntry> auditCaptor = ArgumentCaptor.forClass(AuditEntry.class);
+    verify(auditLogService).recordSuccess(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().action()).isEqualTo(AuditAction.MACHINE_UPDATED);
+    assertThat(auditCaptor.getValue().targetType()).isEqualTo(AuditTargetType.MACHINE);
+    assertThat(auditCaptor.getValue().targetId()).isEqualTo(55L);
+  }
+
+  @Test
+  @DisplayName("Cập nhật máy không tồn tại hoặc thuộc lab khác -> ném 404 MACHINE_NOT_FOUND")
+  void updateMachine_notFound_throwsNotFound() {
+    FilmLab lab = createLab(10L, 100L);
+    when(labAccessService.requireOwnedLab(100L)).thenReturn(lab);
+    when(machineRepository.findByIdAndFilmLabId(999L, 10L)).thenReturn(Optional.empty());
+
+    UpdateMachineRequest request =
+        new UpdateMachineRequest(
+            "Model X",
+            20,
+            Set.of(1L),
+            Set.of(1L),
+            createStandardWeekHourRequests());
+
+    assertThatThrownBy(() -> machineService.updateMachine(100L, 999L, request))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.MACHINE_NOT_FOUND));
 
     verify(machineRepository, never()).saveAndFlush(any());
   }
