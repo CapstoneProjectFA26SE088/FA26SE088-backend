@@ -17,27 +17,31 @@ public class Shipment {
     private Long id;
 
     /** Mã đơn nội bộ. UNIQUE để chống tạo trùng vận đơn cho cùng một đơn. */
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false, unique = true, name = "order_code")
     private String orderCode;
 
     /** Mã provider: "ghn", "grab", "mock"... */
-    @Column(nullable = false)
+    @Column(nullable = false, name = "provider")
     private String provider;
 
     /** Mã vận đơn bên nhà vận chuyển, dùng để đối chiếu webhook. */
+    @Column(name = "provider_order_id", nullable = false)
     private String providerOrderId;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = false, name = "status")
     private DeliveryStatus status;
 
+    @Column(name = "cod_amount_vnd", nullable = false)
     private long codAmount;   // tiền thu hộ (VND)
+    @Column(name = "estimated_fee_vnd")
     private long fee;         // phí vận chuyển (VND)
 
     /** Thời điểm của event gần nhất đã áp dụng, dùng để bỏ qua event cũ đến muộn. */
+    @Column(name = "last_event_at")
     private Instant lastEventAt;
 
-
+    @Column(name = "created_at")
     private Instant createdAt = Instant.now();
 
     protected Shipment() { } // bắt buộc cho JPA
