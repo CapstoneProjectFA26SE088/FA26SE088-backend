@@ -39,6 +39,17 @@ public class LabAccessServiceImpl implements LabAccessService {
     return lab;
   }
 
+  @Override
+  @Transactional(readOnly = true)
+  public FilmLab getLabForOrdering(Long labId) {
+    FilmLab lab = filmLabRepository.findById(labId).orElseThrow(LabAccessServiceImpl::labNotFound);
+    if (!lab.isAcceptingOrders()) {
+      throw new BusinessException(
+          ErrorCode.LAB_NOT_ACCEPTING_ORDERS, "Film Lab hiện đang tạm ngừng nhận đơn mới.");
+    }
+    return lab;
+  }
+
   private static BusinessException labNotFound() {
     return new BusinessException(ErrorCode.LAB_NOT_FOUND, "Không tìm thấy Film Lab.");
   }

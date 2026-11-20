@@ -12,11 +12,16 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "filmlink.mail.provider", havingValue = "log")
+@ConditionalOnProperty(name = "filmlink.mail.provider", havingValue = "log", matchIfMissing = true)
 public class LoggingEmailClient implements EmailClient {
 
   @Override
   public void send(String recipient, String subject, String body) {
     log.info("[MAIL provider=log] To: {} | Subject: {}\n{}", recipient, subject, body);
+  }
+
+  @Override
+  public void sendHtml(String recipient, String subject, String htmlBody) {
+    log.info("[MAIL provider=log (HTML)] To: {} | Subject: {}\n{}", recipient, subject, htmlBody);
   }
 }

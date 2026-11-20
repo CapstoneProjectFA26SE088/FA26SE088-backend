@@ -1,74 +1,90 @@
 package com.fa26se088.filmlink.service.order;
 
-import com.fa26se088.filmlink.dto.common.PageResponse;
-import com.fa26se088.filmlink.dto.order.request.AnswerScheduleChangeRequest;
 import com.fa26se088.filmlink.dto.order.request.CancelServiceOrderRequest;
+import com.fa26se088.filmlink.dto.order.request.ConfirmReceiptAndFinalizePriceRequest;
 import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
-import com.fa26se088.filmlink.dto.order.request.SearchServiceOrderRequest;
-import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
-import com.fa26se088.filmlink.dto.order.response.ServiceOrderSummaryResponse;
-import com.fa26se088.filmlink.dto.order.response.ServiceOrderCreationResult;
-import com.fa26se088.filmlink.dto.order.response.ServiceOrderQuoteResponse;
+import com.fa26se088.filmlink.dto.order.request.RejectServiceOrderRequest;
+import com.fa26se088.filmlink.dto.order.response.ServiceOrderResponse;
+import com.fa26se088.filmlink.entity.order.enums.ServiceOrderStatus;
+import com.fa26se088.filmlink.security.AuthenticatedAccount;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 /**
- * UC20: Photographer báo giá và tạo Service Order. Mọi method nhận {@code photographerAccountId}
- * của tài khoản đang đăng nhập (role PHOTOGRAPHER hoặc PHOTOGRAPHY_EXPERT, kiểm ở controller).
+ * Service quản lý đơn dịch vụ tráng / scan (ServiceOrder).
  */
 public interface ServiceOrderService {
 
-  /** UC20: báo giá từng cuộn, tổng tạm tính và ngày dự kiến trả. Không ghi DB. */
-  ServiceOrderQuoteResponse quote(Long photographerAccountId, CreateServiceOrderRequest request);
-
   /**
-   * UC20: tạo đơn kèm các cuộn, chụp giá vào cuộn. Gửi lại cùng {@code idempotencyKey} thì trả đơn
-   * đã có ({@code created = false}), không tạo thêm (NFR-REL-02).
-   */
-  ServiceOrderCreationResult create(Long photographerAccountId, CreateServiceOrderRequest request);
-
-  /**
-   * UC72: Photographer trả lời thay đổi lịch do sự cố máy của đơn mình. Giai đoạn này chỉ {@code
-   * WAIT}.
+   * Tạo đơn dịch vụ mới (UC20, BR-06, BR-09, BR-17*, BR-19*).
    *
-   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404) khi
-   *     đơn không thuộc Photographer, {@code ORDER_OPTION_NOT_SUPPORTED} (422) với {@code CANCEL} /
-   *     {@code TRANSFER}
+   * @param request dữ liệu tạo đơn
+   * @param account tài khoản người dùng thực hiện (Photographer)
+   * @return ServiceOrderResponse
    */
-  void answerScheduleChange(
-      Long photographerAccountId,
-      Long orderId,
-      Long scheduleChangeId,
-      AnswerScheduleChangeRequest request);
-
-  /** UC25: đơn của Photographer, mới nhất trước, lọc tuỳ chọn theo trạng thái (CR-01, CR-02). */
-  PageResponse<ServiceOrderSummaryResponse> getMyOrders(
-      Long photographerAccountId, SearchServiceOrderRequest request);
+  ServiceOrderResponse createOrder(CreateServiceOrderRequest request, AuthenticatedAccount account);
 
   /**
-   * UC25: chi tiết một đơn của Photographer kèm dòng thời gian công đoạn và bàn giao.
+   * Tra cứu chi tiết đơn dịch vụ theo ID.
    *
-   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404) khi
-   *     đơn không tồn tại hoặc không thuộc Photographer
+   * @param orderId ID đơn
+   * @param account tài khoản người dùng thực hiện (Photographer chủ đơn, Film Lab Owner, hoặc Admin)
+   * @return ServiceOrderResponse
    */
-  ServiceOrderDetailResponse getMyOrder(Long photographerAccountId, Long orderId);
+  ServiceOrderResponse getOrderById(Long orderId, AuthenticatedAccount account);
 
   /**
-   * UC28: Photographer xác nhận đã nhận phim (hoặc đồng ý lab giữ âm bản) của đơn {@code
-   * DELIVERED} → {@code CLOSED}.
+   * Tra cứu chi tiết đơn dịch vụ theo mã đơn (orderCode).
    *
-   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404) khi
-   *     đơn không tồn tại hoặc không thuộc Photographer, {@code ORDER_STATUS_CONFLICT} (409) khi đơn
-   *     không ở {@code DELIVERED}
+   * @param orderCode mã đơn
+   * @param account tài khoản người dùng
+   * @return ServiceOrderResponse
    */
-  ServiceOrderDetailResponse confirmReceipt(Long photographerAccountId, Long orderId);
+  ServiceOrderResponse getOrderByCode(String orderCode, AuthenticatedAccount account);
 
   /**
-   * UC60, BR-38: Photographer huỷ đơn trước khi lab nhận phim ({@code AWAITING_PAYMENT}, {@code
-   * AWAITING_LAB_CONFIRMATION}, {@code AWAITING_FILM}) → {@code CANCELLED}, không mất phí.
-   *
-   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404) khi
-   *     đơn không tồn tại hoặc không thuộc Photographer, {@code ORDER_STATUS_CONFLICT} (409) khi đơn
-   *     ở trạng thái khác (kể cả đã huỷ)
+   * Danh sách đơn hàng của Photographer.
    */
-  ServiceOrderDetailResponse cancel(
-      Long photographerAccountId, Long orderId, CancelServiceOrderRequest request);
+  Page<ServiceOrderResponse> getPhotographerOrders(
+      ServiceOrderStatus status, Pageable pageable, AuthenticatedAccount account);
+
+  /**
+   * Danh sách đơn hàng của Film Lab.
+   */
+  Page<ServiceOrderResponse> getLabOrders(
+      Long labId, ServiceOrderStatus status, Pageable pageable, AuthenticatedAccount account);
+
+  /**
+   * Film Lab chấp nhận đơn hàng (UC22). Chuyển đơn sang AWAITING_FILM.
+   */
+  ServiceOrderResponse acceptOrder(Long orderId, AuthenticatedAccount account);
+
+  /**
+   * Film Lab từ chối đơn hàng (UC22, BR-39). Hoàn tiền nếu đã thanh toán, chuyển đơn sang CANCELLED.
+   */
+  ServiceOrderResponse rejectOrder(Long orderId, RejectServiceOrderRequest request, AuthenticatedAccount account);
+
+  /**
+   * Film Lab xác nhận nhận phim và chốt giá thực tế (UC23, BR-18, BR-25, BR-26).
+   * So sánh giá thực và tiền đã thu:
+   * - Thiếu: chuyển sang AWAITING_TOP_UP (chờ nạp thêm trước khi xử lý/giao kết quả).
+   * - Đủ/Dư: chuyển sang AWAITING_MACHINE_ASSIGNMENT (hoặc IN_PROCESSING) và hoàn tiền phần dư nếu có.
+   */
+  ServiceOrderResponse confirmReceiptAndFinalizePrice(
+      Long orderId, ConfirmReceiptAndFinalizePriceRequest request, AuthenticatedAccount account);
+
+  /**
+   * Khách hàng hủy đơn (UC60, BR-38).
+   * - Trước khi Lab nhận phim: hoàn 100% tiền đã trả.
+   * - Sau khi Lab đã nhận phim: trừ phí hủy (nếu có cấu hình), hoàn phần còn lại.
+   */
+  ServiceOrderResponse cancelOrder(
+      Long orderId, CancelServiceOrderRequest request, AuthenticatedAccount account);
+
+  /**
+   * Đóng đơn dịch vụ (UC29, BR-24): Khách xác nhận đã nhận kết quả hoặc hệ thống đóng.
+   * Chuyển trạng thái sang CLOSED.
+   */
+  ServiceOrderResponse closeOrder(Long orderId, AuthenticatedAccount account);
 }
+

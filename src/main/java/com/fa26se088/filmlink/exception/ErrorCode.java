@@ -60,63 +60,22 @@ public enum ErrorCode {
   // --- lab ---
   LAB_NOT_FOUND(HttpStatus.NOT_FOUND, null),
   LAB_ACCESS_DENIED(HttpStatus.FORBIDDEN, null),
-  /** UC12: tối đa 20 ảnh mẫu mỗi lab. */
-  LAB_IMAGE_LIMIT_REACHED(HttpStatus.UNPROCESSABLE_CONTENT, "MSG08"),
-  /** Ảnh không tồn tại hoặc thuộc lab khác (không lộ id ảnh của lab khác). */
-  LAB_IMAGE_NOT_FOUND(HttpStatus.NOT_FOUND, null),
-  /** BR-57: chưa có máy PROCESSOR và máy SCANNER đang ACTIVE thì không được bật nhận đơn. */
-  LAB_MACHINES_NOT_READY(HttpStatus.UNPROCESSABLE_CONTENT, "MSG32"),
-  /** Gói không tồn tại hoặc thuộc lab khác (không lộ id gói của lab khác). */
-  LAB_PACKAGE_NOT_FOUND(HttpStatus.NOT_FOUND, null),
-  /** UC13: tên gói trùng một gói khác của cùng lab (không phân biệt hoa thường). */
-  LAB_PACKAGE_NAME_DUPLICATE(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** BR-16: Service Type / Film Process / Film Format không tồn tại hoặc không còn ACTIVE. */
-  LAB_PACKAGE_MASTERDATA_INACTIVE(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC13: mức scan bị bỏ khi sửa gói đang được {@code film_rolls} tham chiếu; nên ngừng bán gói. */
-  LAB_SCAN_OPTION_IN_USE(HttpStatus.CONFLICT, null),
+  LAB_NOT_ACCEPTING_ORDERS(HttpStatus.BAD_REQUEST, null),
 
   // --- order ---
-  /** UC20, BR-34, BR-57: lab chưa bật nhận đơn hoặc chưa đủ điều kiện nhận đơn. */
-  ORDER_LAB_NOT_ACCEPTING(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC20: gói không thuộc lab, không ON_SALE, hoặc master data của gói đã ngừng dùng (BR-16). */
-  ORDER_PACKAGE_NOT_ORDERABLE(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC20: khổ phim của cuộn khác khổ phim của gói. */
-  ORDER_FILM_FORMAT_MISMATCH(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC20: mức scan không thuộc gói đã chọn. */
-  ORDER_SCAN_OPTION_INVALID(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC20: gói không nhận push/pull mà cuộn có số stop khác 0. */
-  ORDER_PUSH_PULL_NOT_AVAILABLE(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC20: dòng phim không có trong danh mục hoặc đã ngừng dùng (BR-16). */
-  ORDER_FILM_STOCK_INVALID(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** Phương án chưa hỗ trợ ở giai đoạn này: Express, Parcel Shipping, COD. */
-  ORDER_OPTION_NOT_SUPPORTED(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** Đơn không tồn tại hoặc thuộc lab khác (không lộ đơn của lab khác). */
   ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, null),
-  /** UC22: thao tác không hợp lệ với trạng thái hiện tại của đơn, hoặc đơn vừa bị người khác đổi. */
-  ORDER_STATUS_CONFLICT(HttpStatus.CONFLICT, null),
-  /** UC69, UH-51: lab không đủ máy / công suất phù hợp để xử lý đơn. */
-  ORDER_SCHEDULE_INFEASIBLE(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** BR-60: ngày hẹn trả lab chọn sớm hơn ngày đề xuất; lab chỉ được dời muộn hơn. */
-  ORDER_PROMISED_DATE_TOO_EARLY(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** BR-07, UC24: công đoạn ghi không phải công đoạn kế tiếp (nhảy cóc, lùi, lặp, hoặc đã tới QC). */
-  ORDER_STAGE_OUT_OF_ORDER(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC26: cuộn không thuộc đơn, hoặc không ở trạng thái RECEIVED (không lộ cuộn của đơn khác). */
-  ORDER_ROLL_NOT_FOUND(HttpStatus.NOT_FOUND, null),
-
-  // --- archive ---
-  /** UC26: link file gốc không truy cập được (không trả 2xx, quá thời gian, host nội bộ). */
-  ARCHIVE_LINK_UNREACHABLE(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC26: giao scan khi còn cuộn RECEIVED thiếu ảnh xem trước hoặc thiếu link file gốc đã kiểm. */
-  ARCHIVE_DELIVERY_INCOMPLETE(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC26: ảnh xem trước không đọc được như JPEG hoặc cạnh dài vượt 2048 px. */
-  ARCHIVE_PREVIEW_INVALID(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC26: vượt 100 ảnh xem trước hiện hành của một cuộn ({@code ck_scan_files_frame}). */
-  ARCHIVE_PREVIEW_LIMIT_REACHED(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** UC28: cuộn không có trong archive của người xem (không tồn tại, của người khác, chưa giao). */
-  ARCHIVE_ROLL_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  ORDER_INVALID_STATE(HttpStatus.CONFLICT, null),
+  ORDER_ACCESS_DENIED(HttpStatus.FORBIDDEN, null),
+  ORDER_ALREADY_PAID(HttpStatus.CONFLICT, null),
+  ORDER_CREATION_FAILED(HttpStatus.BAD_REQUEST, null),
 
   // --- payment ---
   PAYMENT_GATEWAY_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, null),
+  PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  PAYMENT_INVALID_STATE(HttpStatus.CONFLICT, null),
+  PAYMENT_AMOUNT_MISMATCH(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  PAYMENT_SIGNATURE_INVALID(HttpStatus.BAD_REQUEST, null),
+  PAYMENT_ACCESS_DENIED(HttpStatus.FORBIDDEN, null),
 
   // --- storage (client/storage) ---
   STORAGE_FILE_TYPE_NOT_ALLOWED(HttpStatus.BAD_REQUEST, null),
@@ -126,28 +85,17 @@ public enum ErrorCode {
   /** UH-39: storage lỗi thì báo rõ, phần khác vẫn chạy. */
   STORAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, null),
 
-  // --- masterdata (MD-02, UC54) ---
-  /** Mã code đã tồn tại trong bảng danh mục (BR-16). */
-  MASTERDATA_CODE_DUPLICATE(HttpStatus.CONFLICT, null),
-  /** Danh mục đang được tham chiếu, không thể xóa cứng; phải chuyển sang DISCONTINUED (BR-16). */
-  MASTERDATA_IN_USE(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** Tham số hệ thống không tồn tại (UC54). */
-  SYSTEM_PARAMETER_NOT_FOUND(HttpStatus.NOT_FOUND, null),
-  /** Giá trị tham số hệ thống không hợp lệ hoặc vi phạm ràng buộc miền giá trị / thứ tự (BR-38). */
-  SYSTEM_PARAMETER_INVALID_VALUE(HttpStatus.UNPROCESSABLE_CONTENT, null),
-  /** Xung đột phiên bản cập nhật tham số hệ thống do có người khác cập nhật trước (Optimistic Locking). */
-  SYSTEM_PARAMETER_CONFLICT(HttpStatus.CONFLICT, null),
-  /**
-   * Tham số không sửa được qua màn hình tham số (ví dụ {@code EMBEDDING_MODEL}: đổi model phải
-   * re-embed Knowledge Base theo quy trình ở header cụm 5).
-   */
-  SYSTEM_PARAMETER_READ_ONLY(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  // --- notification / email (client/notification) ---
+  /** UH-37: Lỗi gửi email qua SMTP hoặc dịch vụ mail không khả dụng. */
+  EMAIL_SEND_FAILED(HttpStatus.SERVICE_UNAVAILABLE, null),
 
-  // --- ai ---
-  /** LLM API chưa cấu hình hoặc lỗi, với thao tác không có câu trả lời dự phòng (reindex). */
-  AI_PROVIDER_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, null),
-  /** UC19: session chatbot không tồn tại hoặc của người khác (không lộ session của người khác). */
-  AI_CHAT_SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, null);
+  // --- delivery / geocoding (client/maps) ---
+  /** DEL-GEO-01: API key Google Maps chưa được cấu hình. */
+  GEOCODING_SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, null),
+  /** DEL-GEO-01: Không tìm thấy kết quả tọa độ hoặc địa chỉ tương ứng. */
+  GEOCODING_NO_RESULT(HttpStatus.NOT_FOUND, null),
+  /** DEL-GEO-01: Lỗi khi kết nối hoặc gọi API bên ngoài (Google Maps Geocoding). */
+  GEOCODING_API_ERROR(HttpStatus.BAD_GATEWAY, null);
 
   private final HttpStatus httpStatus;
   private final String messageCode;
