@@ -24,6 +24,7 @@
         <jacoco.version>0.8.12</jacoco.version>
         <checkstyle-plugin.version>3.6.0</checkstyle-plugin.version>
         <checkstyle.version>10.21.4</checkstyle.version>
+        <lombok.version>1.18.38</lombok.version>
     </properties>
 
     <dependencies>
