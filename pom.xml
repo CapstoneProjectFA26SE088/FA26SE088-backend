@@ -21,6 +21,9 @@
         <springdoc.version>3.1.1</springdoc.version>
         <jjwt.version>0.13.0</jjwt.version>
         <google-maps-services.version>2.2.0</google-maps-services.version>
+        <jacoco.version>0.8.12</jacoco.version>
+        <checkstyle-plugin.version>3.6.0</checkstyle-plugin.version>
+        <checkstyle.version>10.21.4</checkstyle.version>
     </properties>
 
     <dependencies>
