@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -50,6 +51,18 @@ class GlobalExceptionHandlerTest {
     assertThat(response.getStatusCode().value()).isEqualTo(413);
     assertThat(((ProblemDetail) response.getBody()).getProperties())
         .containsEntry("errorCode", "STORAGE_FILE_TOO_LARGE");
+  }
+
+  /** Optimistic lock không được service tự bắt: 409 mã chung, không gắn với domain masterdata. */
+  @Test
+  void optimisticLockingFailureBecomesConcurrentUpdateConflict() {
+    ProblemDetail problem =
+        handler.handleOptimisticLockingFailureException(
+            new OptimisticLockingFailureException("row was updated"));
+
+    assertThat(problem.getStatus()).isEqualTo(409);
+    assertThat(problem.getProperties()).containsEntry("errorCode", "CONCURRENT_UPDATE_CONFLICT");
+    assertThat(problem.getDetail()).doesNotContain("row was updated");
   }
 
   /** CR-06: lỗi không lường trước không lộ thông điệp kỹ thuật. */

@@ -11,6 +11,7 @@ package com.fa26se088.filmlink.entity.audit.enums;
 public enum AuditAction {
   // --- account ---
   ACCOUNT_PASSWORD_CHANGED,
+  ACCOUNT_ADMIN_CREATED,
 
   /** SCR-03: đặt lại mật khẩu thành công qua luồng quên mật khẩu. */
   ACCOUNT_PASSWORD_RESET,

@@ -1,6 +1,7 @@
 package com.fa26se088.filmlink.service.account;
 
 import com.fa26se088.filmlink.dto.account.request.ChangePasswordRequest;
+import com.fa26se088.filmlink.dto.account.request.CreateAdminRequest;
 import com.fa26se088.filmlink.dto.account.request.ForgotPasswordRequest;
 import com.fa26se088.filmlink.dto.account.request.RegisterRequest;
 import com.fa26se088.filmlink.dto.account.request.ResendOtpRequest;
@@ -15,7 +16,7 @@ import com.fa26se088.filmlink.dto.account.response.UserAccountResponse;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import java.util.Optional;
 
-/** Vòng đời tài khoản: đăng ký Photographer, xác thực email, hồ sơ của chính mình (UC06), đổi mật khẩu (UC02), quên mật khẩu (SCR-03). */
+/** Vòng đời tài khoản: đăng ký Photographer, xác thực email, hồ sơ của chính mình (UC06), đổi mật khẩu (UC02), quên mật khẩu (SCR-03), tạo tài khoản Admin. */
 public interface UserAccountService {
 
   /**

@@ -19,7 +19,17 @@ public enum StoragePurpose {
       Set.of(StorageFileType.PDF, StorageFileType.JPEG, StorageFileType.PNG)),
 
   /** Ảnh mẫu của Film Lab: JPG/PNG, tối đa 10 MB. */
-  LAB_IMAGE("lab-image", 10 * StoragePurpose.MB, Set.of(StorageFileType.JPEG, StorageFileType.PNG));
+  LAB_IMAGE("lab-image", 10 * StoragePurpose.MB, Set.of(StorageFileType.JPEG, StorageFileType.PNG)),
+
+  /** Ảnh bằng chứng bàn giao phim (BR-25; UC23 1–10 ảnh): JPG/PNG, tối đa 10 MB mỗi file. */
+  HANDOVER_PHOTO(
+      "handover-photo", 10 * StoragePurpose.MB, Set.of(StorageFileType.JPEG, StorageFileType.PNG)),
+
+  /**
+   * Ảnh xem trước (Preview Scan) của một cuộn (UC26, BR-08): chỉ JPG, tối đa 5 MB ({@code
+   * ck_scan_files_size}); cạnh dài ≤ 2048 px do domain archive kiểm.
+   */
+  PREVIEW_SCAN("preview-scan", 5 * StoragePurpose.MB, Set.of(StorageFileType.JPEG));
 
   private static final long MB = 1024L * 1024L;
 

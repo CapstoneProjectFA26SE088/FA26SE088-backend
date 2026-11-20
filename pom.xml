@@ -151,7 +151,8 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <!-- Java trên Windows gửi múi giờ Asia/Saigon, PostgreSQL bản mới không còn tên này. -->
-                    <argLine>-Duser.timezone=UTC</argLine>
+                    <!-- @{argLine} giữ agent JaCoCo; đặt cứng giá trị sẽ đè mất agent và report coverage rỗng. -->
+                    <argLine>@{argLine} -Duser.timezone=UTC</argLine>
                 </configuration>
             </plugin>
             <plugin>
