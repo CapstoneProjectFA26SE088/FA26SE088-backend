@@ -29,6 +29,8 @@ public enum AuditTargetType {
   MACHINE,
   /** UC70: sự cố thiết bị máy tráng / máy scan của lab. */
   MACHINE_INCIDENT,
+  /** UC71, UC72: bản ghi thay đổi lịch hẹn trả đơn hàng do sự cố máy. */
+  SCHEDULE_CHANGE,
 
   // --- order ---
   /** UC20: đơn dịch vụ tráng / scan. */

@@ -61,6 +61,9 @@ public enum AuditAction {
   /** UC70: Film Lab Owner xác nhận giải quyết xong sự cố và khôi phục máy ACTIVE. */
   MACHINE_INCIDENT_RESOLVED,
 
+  /** UC72: Photographer phản hồi thông báo dời ngày hẹn trả do sự cố máy. */
+  SCHEDULE_CHANGE_ANSWERED,
+
   // --- order ---
   /** UC20: Photographer tạo Service Order; after ghi mã đơn, lab, trạng thái, tổng tạm tính. */
   ORDER_CREATED,

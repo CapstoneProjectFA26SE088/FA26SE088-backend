@@ -10,11 +10,15 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fa26se088.filmlink.client.storage.StorageClient;
+import com.fa26se088.filmlink.dto.account.request.SubmitLabApplicationRequest;
 import com.fa26se088.filmlink.entity.account.LabRegistrationApplication;
 import com.fa26se088.filmlink.entity.account.UserAccount;
 import com.fa26se088.filmlink.entity.account.enums.LabApplicationStatus;
@@ -46,9 +50,11 @@ import com.fa26se088.filmlink.repository.machine.OrderCapacityAllocationReposito
 import com.fa26se088.filmlink.repository.machine.ScheduleChangeRepository;
 import com.fa26se088.filmlink.repository.masterdata.FilmFormatRepository;
 import com.fa26se088.filmlink.repository.masterdata.FilmProcessRepository;
+import com.fa26se088.filmlink.repository.masterdata.ServiceTypeRepository;
 import com.fa26se088.filmlink.security.JwtTokenProvider;
 import com.fa26se088.filmlink.service.machine.impl.CapacitySchedulingEngine;
 import com.fa26se088.filmlink.service.notification.NotificationService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
@@ -59,6 +65,7 @@ import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -70,6 +77,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -94,6 +102,8 @@ class MachineControllerIntegrationTest {
   @Autowired private OrderCapacityAllocationRepository orderCapacityAllocationRepository;
   @Autowired private FilmProcessRepository filmProcessRepository;
   @Autowired private FilmFormatRepository filmFormatRepository;
+  @Autowired private ServiceTypeRepository serviceTypeRepository;
+  @Autowired private StorageClient storageClient;
   @Autowired private AuditLogRepository auditLogRepository;
   @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private PasswordEncoder passwordEncoder;
@@ -743,6 +753,276 @@ class MachineControllerIntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + ownerToken))
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.errorCode", is("MACHINE_INCIDENT_ALREADY_RESOLVED")));
+  }
+
+  @Test
+  @DisplayName(
+      "TC-WF04: Luồng Onboarding Lab End-to-End (Guest nộp đơn -> Admin duyệt -> Chủ lab tạo gói, bị chặn 422 khi thiếu máy -> Khai báo P1 & S1 + settings -> Bật nhận đơn thành công)")
+  void tcWf04_endToEndLabOnboardingAndMachineReadinessWorkflow() throws Exception {
+    Long activeServiceTypeId =
+        serviceTypeRepository.findAll().stream()
+            .filter(st -> st.getStatus() == CatalogStatus.ACTIVE)
+            .findFirst()
+            .orElseThrow()
+            .getId();
+
+    UserAccount admin =
+        userAccountRepository
+            .findByEmail("wf04.admin@filmlink.vn")
+            .orElseGet(
+                () -> {
+                  UserAccount u = new UserAccount();
+                  u.setEmail("wf04.admin@filmlink.vn");
+                  u.setFullName("WF04 Admin");
+                  u.setPasswordHash(passwordEncoder.encode("Password123@"));
+                  u.setRole(UserAccountRole.ADMIN);
+                  u.setStatus(UserAccountStatus.ACTIVE);
+                  u.setTermsAcceptedAt(Instant.now());
+                  u.setEmailVerifiedAt(Instant.now());
+                  return userAccountRepository.save(u);
+                });
+    String adminToken =
+        jwtTokenProvider.generateAccessToken(admin.getId(), admin.getEmail(), admin.getRole());
+
+    String uniqueSuffix = UUID.randomUUID().toString().substring(0, 8);
+    String newOwnerEmail = "wf04.owner." + uniqueSuffix + "@filmlink.vn";
+    String taxCode =
+        "03" + String.format("%08d", ThreadLocalRandom.current().nextInt(100_000_000));
+
+    Long appId = null;
+    Long wf04LabId = null;
+    Long wf04OwnerId = null;
+
+    try {
+      // Bước 1 (UC07): Guest nộp đơn đăng ký Lab
+      SubmitLabApplicationRequest submitRequest =
+          new SubmitLabApplicationRequest(
+              "WF04 Saigon Lab " + uniqueSuffix,
+              taxCode,
+              "88 Dong Khoi " + uniqueSuffix,
+              "Quan 1",
+              "TP Ho Chi Minh",
+              "contact." + uniqueSuffix + "@filmlink.vn",
+              "0909887766",
+              Set.of(activeServiceTypeId),
+              Set.of(activeProcessId),
+              Set.of(activeFormatId));
+
+      MockMultipartFile dataPart =
+          new MockMultipartFile(
+              "data",
+              "",
+              MediaType.APPLICATION_JSON_VALUE,
+              objectMapper.writeValueAsBytes(submitRequest));
+      MockMultipartFile pdfDoc =
+          new MockMultipartFile(
+              "documents",
+              "giay_phep_kinh_doanh.pdf",
+              "application/pdf",
+              "%PDF-1.4 wf04 legal doc".getBytes(StandardCharsets.UTF_8));
+
+      String submitResponse =
+          mockMvc
+              .perform(multipart("/api/v1/public/lab-applications").file(dataPart).file(pdfDoc))
+              .andExpect(status().isCreated())
+              .andExpect(jsonPath("$.status", is("PENDING_REVIEW")))
+              .andReturn()
+              .getResponse()
+              .getContentAsString(StandardCharsets.UTF_8);
+
+      JsonNode submitNode = objectMapper.readTree(submitResponse);
+      appId = submitNode.get("id").asLong();
+
+      // Bước 2 (UC08): Admin xem chi tiết đơn để lấy version hiện tại rồi duyệt đơn -> tạo
+      // FILM_LAB_OWNER ACTIVE và FilmLab (acceptingOrders=false)
+      String detailResponse =
+          mockMvc
+              .perform(
+                  get("/api/v1/admin/lab-applications/" + appId)
+                      .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
+              .andExpect(status().isOk())
+              .andExpect(jsonPath("$.status", is("PENDING_REVIEW")))
+              .andReturn()
+              .getResponse()
+              .getContentAsString(StandardCharsets.UTF_8);
+
+      int version = objectMapper.readTree(detailResponse).get("version").asInt();
+
+      String approveBody =
+          """
+          {
+            "version": %d,
+            "accountEmail": "%s"
+          }
+          """
+              .formatted(version, newOwnerEmail);
+
+      mockMvc
+          .perform(
+              post("/api/v1/admin/lab-applications/" + appId + "/approve")
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(approveBody))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.status", is("APPROVED")));
+
+      UserAccount wf04Owner = userAccountRepository.findByEmail(newOwnerEmail).orElseThrow();
+      wf04OwnerId = wf04Owner.getId();
+      assertThat(wf04Owner.getRole()).isEqualTo(UserAccountRole.FILM_LAB_OWNER);
+      assertThat(wf04Owner.getStatus()).isEqualTo(UserAccountStatus.ACTIVE);
+
+      FilmLab wf04Lab = filmLabRepository.findByOwnerAccountId(wf04OwnerId).orElseThrow();
+      wf04LabId = wf04Lab.getId();
+      assertThat(wf04Lab.isAcceptingOrders()).isFalse();
+
+      String wf04OwnerToken =
+          jwtTokenProvider.generateAccessToken(
+              wf04Owner.getId(), wf04Owner.getEmail(), wf04Owner.getRole());
+
+      // Bước 3 (UC13 & BR-57): Tạo gói ON_SALE nhưng chưa có máy -> bật nhận đơn bị chặn 422 MSG32
+      String packageBody =
+          """
+          {
+            "packageName": "Gói Tráng C-41 Tiêu Chuẩn",
+            "serviceTypeId": %d,
+            "filmProcessId": %d,
+            "filmFormatId": %d,
+            "priceVnd": 70000,
+            "turnaroundDays": 5,
+            "pushPullAvailable": false,
+            "scanOptions": []
+          }
+          """
+              .formatted(activeServiceTypeId, activeProcessId, activeFormatId);
+
+      mockMvc
+          .perform(
+              post("/api/v1/film-labs/me/packages")
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + wf04OwnerToken)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(packageBody))
+          .andExpect(status().isCreated())
+          .andExpect(jsonPath("$.status", is("ON_SALE")));
+
+      mockMvc
+          .perform(
+              patch("/api/v1/film-labs/me/accepting-orders")
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + wf04OwnerToken)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content("{\"acceptingOrders\":true}"))
+          .andExpect(status().isUnprocessableContent())
+          .andExpect(jsonPath("$.errorCode", is("LAB_MACHINES_NOT_READY")))
+          .andExpect(jsonPath("$.messageCode", is("MSG32")))
+          .andExpect(jsonPath("$.missing[0]", is("MACHINES")));
+
+      // Bước 4 (UC68): Khai báo đủ PROCESSOR + SCANNER ACTIVE và tham số lập lịch
+      String workingHoursJson =
+          """
+          [
+            {"dayOfWeek": 1, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 2, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 3, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 4, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 5, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 6, "closed": false, "opensAt": "08:00", "closesAt": "16:00"},
+            {"dayOfWeek": 7, "closed": true}
+          ]
+          """;
+
+      String createProcessorBody =
+          """
+          {
+            "machineCode": "P-WF04",
+            "modelName": "Noritsu V30",
+            "machineType": "PROCESSOR",
+            "capacityPerHour": 26,
+            "filmProcessIds": [%d],
+            "filmFormatIds": [%d],
+            "workingHours": %s
+          }
+          """
+              .formatted(activeProcessId, activeFormatId, workingHoursJson);
+
+      String createScannerBody =
+          """
+          {
+            "machineCode": "S-WF04",
+            "modelName": "Frontier SP-3000",
+            "machineType": "SCANNER",
+            "capacityPerHour": 327,
+            "filmProcessIds": [],
+            "filmFormatIds": [%d],
+            "workingHours": %s
+          }
+          """
+              .formatted(activeFormatId, workingHoursJson);
+
+      mockMvc
+          .perform(
+              post(API_PATH)
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + wf04OwnerToken)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(createProcessorBody))
+          .andExpect(status().isCreated())
+          .andExpect(jsonPath("$.status", is("ACTIVE")));
+
+      mockMvc
+          .perform(
+              post(API_PATH)
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + wf04OwnerToken)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(createScannerBody))
+          .andExpect(status().isCreated())
+          .andExpect(jsonPath("$.status", is("ACTIVE")));
+
+      mockMvc
+          .perform(
+              put("/api/v1/film-labs/me/scheduling-settings")
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + wf04OwnerToken)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(
+                      "{\"qcBufferHours\":4,\"expressDailyCapPercent\":25,"
+                          + "\"expressCommitmentWorkingDays\":2}"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.qcBufferHours", is(4)));
+
+      // Bước 5 (UC12): Bật nhận đơn thành công khi đã đủ điều kiện BR-57 & BR-34
+      mockMvc
+          .perform(
+              patch("/api/v1/film-labs/me/accepting-orders")
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + wf04OwnerToken)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content("{\"acceptingOrders\":true}"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.acceptingOrders", is(true)));
+    } finally {
+      cleanupWf04Lab(wf04LabId, appId, wf04OwnerId);
+    }
+  }
+
+  private void cleanupWf04Lab(Long wf04LabId, Long appId, Long wf04OwnerId) {
+    if (wf04LabId != null) {
+      jdbcTemplate.update("DELETE FROM machines WHERE film_lab_id = ?", wf04LabId);
+      jdbcTemplate.update("DELETE FROM service_packages WHERE film_lab_id = ?", wf04LabId);
+      jdbcTemplate.update("DELETE FROM film_labs WHERE id = ?", wf04LabId);
+    }
+    if (appId != null) {
+      jdbcTemplate
+          .queryForList(
+              "SELECT blob_key FROM lab_registration_documents"
+                  + " WHERE lab_registration_application_id = ?",
+              String.class,
+              appId)
+          .forEach(storageClient::delete);
+      jdbcTemplate.update("DELETE FROM lab_registration_applications WHERE id = ?", appId);
+    }
+    if (wf04OwnerId != null) {
+      jdbcTemplate.update(
+          "DELETE FROM user_accounts WHERE id = ?"
+              + " AND NOT EXISTS (SELECT 1 FROM audit_logs WHERE actor_account_id = ?)",
+          wf04OwnerId,
+          wf04OwnerId);
+    }
   }
 
   private long insertInProcessingOrder(Instant priceLockedAt, Instant promisedReturnAt) {
