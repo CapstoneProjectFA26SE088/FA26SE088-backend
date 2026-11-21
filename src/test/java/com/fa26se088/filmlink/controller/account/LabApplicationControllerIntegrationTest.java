@@ -16,8 +16,11 @@ import com.fa26se088.filmlink.repository.account.LabRegistrationApplicationRepos
 import com.fa26se088.filmlink.repository.masterdata.FilmFormatRepository;
 import com.fa26se088.filmlink.repository.masterdata.FilmProcessRepository;
 import com.fa26se088.filmlink.repository.masterdata.ServiceTypeRepository;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +60,7 @@ class LabApplicationControllerIntegrationTest {
     private Long activeServiceTypeId;
     private Long activeFilmProcessId;
     private Long activeFilmFormatId;
+    private final List<Long> createdApplicationIds = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -67,7 +71,10 @@ class LabApplicationControllerIntegrationTest {
 
     @AfterEach
     void tearDown() {
-        applicationRepository.deleteAll();
+        if (!createdApplicationIds.isEmpty()) {
+            applicationRepository.deleteAllById(createdApplicationIds);
+            createdApplicationIds.clear();
+        }
     }
 
     @Test
@@ -103,7 +110,7 @@ class LabApplicationControllerIntegrationTest {
                 "image/png",
                 new byte[] { (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3 });
 
-        mockMvc
+        String responseBody = mockMvc
                 .perform(
                         multipart(API_PATH)
                                 .file(dataPart)
@@ -116,7 +123,12 @@ class LabApplicationControllerIntegrationTest {
                 .andExpect(jsonPath("$.taxCode").value("0312345678"))
                 .andExpect(jsonPath("$.status").value(LabApplicationStatus.PENDING_REVIEW.name()))
                 .andExpect(jsonPath("$.isDuplicateSuspected").value(false))
-                .andExpect(jsonPath("$.documents.length()").value(2));
+                .andExpect(jsonPath("$.documents.length()").value(2))
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        createdApplicationIds.add(objectMapper.readTree(responseBody).get("id").asLong());
 
         verify(emailClient).send(eq("info@filmclub.vn"), anyString(), anyString());
     }
@@ -155,7 +167,9 @@ class LabApplicationControllerIntegrationTest {
                 .getResponse()
                 .getContentAsString(StandardCharsets.UTF_8);
 
-        String appCode = objectMapper.readTree(responseBody).get("applicationCode").asText();
+        JsonNode responseNode = objectMapper.readTree(responseBody);
+        createdApplicationIds.add(responseNode.get("id").asLong());
+        String appCode = responseNode.get("applicationCode").asText();
 
         mockMvc
                 .perform(get(API_PATH + "/" + appCode))
