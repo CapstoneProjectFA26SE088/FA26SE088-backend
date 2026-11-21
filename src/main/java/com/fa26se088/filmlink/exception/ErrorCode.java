@@ -75,6 +75,18 @@ public enum ErrorCode {
   /** UC13: mức scan bị bỏ khi sửa gói đang được {@code film_rolls} tham chiếu; nên ngừng bán gói. */
   LAB_SCAN_OPTION_IN_USE(HttpStatus.CONFLICT, null),
 
+  // --- machine (UC68, BR-57, BR-58) ---
+  /** Máy không tồn tại hoặc thuộc lab khác (không lộ id máy của lab khác). */
+  MACHINE_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  /** UC68: mã máy trùng một máy khác trong cùng lab (không phân biệt hoa thường). */
+  MACHINE_CODE_DUPLICATE(HttpStatus.CONFLICT, null),
+  /** BR-16: Film Process hoặc Film Format của máy không tồn tại hoặc không còn ACTIVE. */
+  MACHINE_MASTERDATA_INACTIVE(HttpStatus.UNPROCESSABLE_CONTENT, null),
+  /** UC70: không tìm thấy sự cố của máy. */
+  MACHINE_INCIDENT_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  /** UC70: sự cố của máy đã được giải quyết trước đó. */
+  MACHINE_INCIDENT_ALREADY_RESOLVED(HttpStatus.CONFLICT, null),
+
   // --- order ---
   /** UC20, BR-34, BR-57: lab chưa bật nhận đơn hoặc chưa đủ điều kiện nhận đơn. */
   ORDER_LAB_NOT_ACCEPTING(HttpStatus.UNPROCESSABLE_CONTENT, null),
