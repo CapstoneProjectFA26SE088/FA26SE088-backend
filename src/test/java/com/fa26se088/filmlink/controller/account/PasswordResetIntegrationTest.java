@@ -48,12 +48,16 @@ import org.springframework.test.web.servlet.ResultActions;
  * Kiểm thử tích hợp luồng Quên mật khẩu 3 bước (SCR-03, UC02):
  *
  * <ol>
- *   <li>POST /api/v1/auth/forgot-password → 204, gửi OTP qua email.
- *   <li>POST /api/v1/auth/verify-password-reset-otp → 200, trả resetToken 15 phút.
- *   <li>POST /api/v1/auth/reset-password → 204, thu hồi refresh token cũ, ghi audit log.
+ * <li>POST /api/v1/auth/forgot-password → 204, gửi OTP qua email.
+ * <li>POST /api/v1/auth/verify-password-reset-otp → 200, trả resetToken 15
+ * phút.
+ * <li>POST /api/v1/auth/reset-password → 204, thu hồi refresh token cũ, ghi
+ * audit log.
  * </ol>
  *
- * <p>Bảo vệ chống enumeration (anti-enumeration): email không tồn tại vẫn trả 204 và <em>không</em>
+ * <p>
+ * Bảo vệ chống enumeration (anti-enumeration): email không tồn tại vẫn trả 204
+ * và <em>không</em>
  * gửi email.
  */
 @SpringBootTest
@@ -70,50 +74,61 @@ class PasswordResetIntegrationTest {
   /** Mật khẩu mới sẽ đặt trong bước 3 của luồng. */
   private static final String NEW_PASSWORD = "NewPass456";
 
-  /** Regex 6 chữ số để extract OTP từ email body (bám sát pattern AuthFlowIntegrationTest). */
+  /**
+   * Regex 6 chữ số để extract OTP từ email body (bám sát pattern
+   * AuthFlowIntegrationTest).
+   */
   private static final Pattern OTP_PATTERN = Pattern.compile("\\b(\\d{6})\\b");
 
-  @Autowired private MockMvc mockMvc;
-  @Autowired private UserAccountRepository userAccountRepository;
-  @Autowired private RefreshTokenRepository refreshTokenRepository;
-  @Autowired private OtpCodeRepository otpCodeRepository;
-  @Autowired private AuditLogRepository auditLogRepository;
-  @Autowired private PasswordEncoder passwordEncoder;
-  @Autowired private JwtTokenProvider jwtTokenProvider;
+  @Autowired
+  private MockMvc mockMvc;
+  @Autowired
+  private UserAccountRepository userAccountRepository;
+  @Autowired
+  private RefreshTokenRepository refreshTokenRepository;
+  @Autowired
+  private OtpCodeRepository otpCodeRepository;
+  @Autowired
+  private AuditLogRepository auditLogRepository;
+  @Autowired
+  private PasswordEncoder passwordEncoder;
 
   /**
-   * Mock EmailClient để capture OTP gửi đi mà không cần SMTP thật. Bám sát cách dùng của
+   * Mock EmailClient để capture OTP gửi đi mà không cần SMTP thật. Bám sát cách
+   * dùng của
    * ChangePasswordIntegrationTest.
    */
-  @MockitoBean private EmailClient emailClient;
+  @MockitoBean
+  private EmailClient emailClient;
 
   /** Tài khoản test được tái sử dụng xuyên suốt các @Test. */
   private UserAccount account;
 
   /**
-   * Chuẩn bị tài khoản ACTIVE với mật khẩu {@link #OLD_PASSWORD} trước mỗi test. Tài khoản đã xác
+   * Chuẩn bị tài khoản ACTIVE với mật khẩu {@link #OLD_PASSWORD} trước mỗi test.
+   * Tài khoản đã xác
    * thực email để có thể đăng nhập bình thường.
    */
   @BeforeEach
   void setUp() {
     // Lấy hoặc tạo mới tài khoản test để tránh duplicate email
-    account =
-        userAccountRepository
-            .findByEmail(EMAIL)
-            .orElseGet(
-                () -> {
-                  UserAccount user = new UserAccount();
-                  user.setEmail(EMAIL);
-                  user.setFullName("Nguyen Van ForgotPass");
-                  user.setPasswordHash(passwordEncoder.encode(OLD_PASSWORD));
-                  user.setRole(UserAccountRole.PHOTOGRAPHER);
-                  user.setStatus(UserAccountStatus.ACTIVE);
-                  user.setTermsAcceptedAt(Instant.now());
-                  user.setEmailVerifiedAt(Instant.now());
-                  return userAccountRepository.save(user);
-                });
+    account = userAccountRepository
+        .findByEmail(EMAIL)
+        .orElseGet(
+            () -> {
+              UserAccount user = new UserAccount();
+              user.setEmail(EMAIL);
+              user.setFullName("Nguyen Van ForgotPass");
+              user.setPasswordHash(passwordEncoder.encode(OLD_PASSWORD));
+              user.setRole(UserAccountRole.PHOTOGRAPHER);
+              user.setStatus(UserAccountStatus.ACTIVE);
+              user.setTermsAcceptedAt(Instant.now());
+              user.setEmailVerifiedAt(Instant.now());
+              return userAccountRepository.save(user);
+            });
 
-    // Reset mật khẩu và trạng thái cho mỗi test (tránh ô nhiễm dữ liệu giữa các test)
+    // Reset mật khẩu và trạng thái cho mỗi test (tránh ô nhiễm dữ liệu giữa các
+    // test)
     account.setPasswordHash(passwordEncoder.encode(OLD_PASSWORD));
     account.setFailedLoginCount((short) 0); // UserAccount.failedLoginCount là Short
     account.setLoginLockedUntil(null);
@@ -140,10 +155,12 @@ class PasswordResetIntegrationTest {
    * Kiểm tra toàn bộ luồng quên mật khẩu thành công:
    *
    * <ol>
-   *   <li>Bước 1: gửi OTP → 204, emailClient được gọi đúng một lần.
-   *   <li>Bước 2: xác thực OTP → 200 với resetToken hợp lệ (không null, không rỗng).
-   *   <li>Bước 3: đặt mật khẩu mới → 204, refresh token cũ bị thu hồi, audit log ghi nhận.
-   *   <li>Sau bước 3: đăng nhập mật khẩu cũ → 401; mật khẩu mới → 200 OK.
+   * <li>Bước 1: gửi OTP → 204, emailClient được gọi đúng một lần.
+   * <li>Bước 2: xác thực OTP → 200 với resetToken hợp lệ (không null, không
+   * rỗng).
+   * <li>Bước 3: đặt mật khẩu mới → 204, refresh token cũ bị thu hồi, audit log
+   * ghi nhận.
+   * <li>Sau bước 3: đăng nhập mật khẩu cũ → 401; mật khẩu mới → 200 OK.
    * </ol>
    */
   @Test
@@ -165,17 +182,15 @@ class PasswordResetIntegrationTest {
     assertThat(otp).matches("\\d{6}");
 
     // ── Bước 2: verify-password-reset-otp ────────────────────────────────────
-    String responseJson =
-        postJson("/api/v1/auth/verify-password-reset-otp", verifyOtpBody(EMAIL, otp))
-            .andExpect(status().isOk())
-            .andExpect(jsonPath("$.resetToken").isNotEmpty())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
+    String responseJson = postJson("/api/v1/auth/verify-password-reset-otp", verifyOtpBody(EMAIL, otp))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.resetToken").isNotEmpty())
+        .andReturn()
+        .getResponse()
+        .getContentAsString();
 
     // Extract resetToken từ JSON response
-    String resetToken =
-        com.jayway.jsonpath.JsonPath.read(responseJson, "$.resetToken");
+    String resetToken = com.jayway.jsonpath.JsonPath.read(responseJson, "$.resetToken");
     assertThat(resetToken).isNotBlank();
 
     // ── Bước 3: reset-password ────────────────────────────────────────────────
@@ -198,9 +213,8 @@ class PasswordResetIntegrationTest {
         AuditLogRepository.byTarget(AuditTargetType.USER_ACCOUNT, account.getId()));
     assertThat(logs)
         .anyMatch(
-            log ->
-                log.getAction() == AuditAction.ACCOUNT_PASSWORD_RESET
-                    && log.getOutcome() == AuditOutcome.SUCCESS);
+            log -> log.getAction() == AuditAction.ACCOUNT_PASSWORD_RESET
+                && log.getOutcome() == AuditOutcome.SUCCESS);
 
     // ── Sau reset: đăng nhập mật khẩu cũ → 401 ──────────────────────────────
     postJson("/api/v1/auth/login", loginBody(OLD_PASSWORD))
@@ -218,7 +232,8 @@ class PasswordResetIntegrationTest {
   // ─────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Yêu cầu OTP bằng email không tồn tại → phải trả 204 giống hệt email tồn tại (chống dò tìm
+   * Yêu cầu OTP bằng email không tồn tại → phải trả 204 giống hệt email tồn tại
+   * (chống dò tìm
    * email trong hệ thống). EmailClient không được gọi.
    */
   @Test
@@ -235,7 +250,8 @@ class PasswordResetIntegrationTest {
   // ─────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Nhập OTP sai → 422 ACCOUNT_OTP_INVALID. Số lần sai phải được lưu vào DB để phòng brute force
+   * Nhập OTP sai → 422 ACCOUNT_OTP_INVALID. Số lần sai phải được lưu vào DB để
+   * phòng brute force
    * ngay cả khi transaction lỗi (noRollbackFor = BusinessException.class).
    */
   @Test
@@ -255,7 +271,8 @@ class PasswordResetIntegrationTest {
   // ─────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Gửi reset token giả mạo (không hợp lệ) → 401 ACCOUNT_INVALID_TOKEN. Đảm bảo không thể đặt
+   * Gửi reset token giả mạo (không hợp lệ) → 401 ACCOUNT_INVALID_TOKEN. Đảm bảo
+   * không thể đặt
    * lại mật khẩu khi không có token hợp lệ.
    */
   @Test
@@ -270,7 +287,8 @@ class PasswordResetIntegrationTest {
   // ─────────────────────────────────────────────────────────────────────────────
 
   /**
-   * Mật khẩu mới không đủ mạnh (ít hơn 8 ký tự) → 400 VALIDATION_ERROR. Kiểm tra Bean Validation
+   * Mật khẩu mới không đủ mạnh (ít hơn 8 ký tự) → 400 VALIDATION_ERROR. Kiểm tra
+   * Bean Validation
    * ở tầng controller.
    */
   @Test
@@ -280,12 +298,11 @@ class PasswordResetIntegrationTest {
         .andExpect(status().isNoContent());
     String otp = captureOtp(EMAIL);
 
-    String responseJson =
-        postJson("/api/v1/auth/verify-password-reset-otp", verifyOtpBody(EMAIL, otp))
-            .andExpect(status().isOk())
-            .andReturn()
-            .getResponse()
-            .getContentAsString();
+    String responseJson = postJson("/api/v1/auth/verify-password-reset-otp", verifyOtpBody(EMAIL, otp))
+        .andExpect(status().isOk())
+        .andReturn()
+        .getResponse()
+        .getContentAsString();
     String resetToken = com.jayway.jsonpath.JsonPath.read(responseJson, "$.resetToken");
 
     // Thử đặt mật khẩu "short" (thiếu chữ hoa, thiếu số, < 8 ký tự)
@@ -305,7 +322,8 @@ class PasswordResetIntegrationTest {
   }
 
   /**
-   * Capture OTP 6 chữ số từ email body được gửi đến {@code recipientEmail}. Bám sát cách dùng
+   * Capture OTP 6 chữ số từ email body được gửi đến {@code recipientEmail}. Bám
+   * sát cách dùng
    * ArgumentCaptor trong AuthFlowIntegrationTest.
    */
   private String captureOtp(String recipientEmail) {
@@ -322,7 +340,8 @@ class PasswordResetIntegrationTest {
   }
 
   /**
-   * Tạo một RefreshToken hợp lệ gắn với tài khoản, dùng để kiểm tra thu hồi sau reset password.
+   * Tạo một RefreshToken hợp lệ gắn với tài khoản, dùng để kiểm tra thu hồi sau
+   * reset password.
    * Hash theo SHA-256 như AuthenticationServiceImpl thực tế làm.
    */
   private RefreshToken buildRefreshToken(UserAccount owner, String rawToken) {
@@ -333,7 +352,9 @@ class PasswordResetIntegrationTest {
     return token;
   }
 
-  /** SHA-256 hex của rawValue, bám sát cách AuthenticationServiceImpl lưu token. */
+  /**
+   * SHA-256 hex của rawValue, bám sát cách AuthenticationServiceImpl lưu token.
+   */
   private static String sha256Hex(String rawValue) {
     try {
       return HexFormat.of()

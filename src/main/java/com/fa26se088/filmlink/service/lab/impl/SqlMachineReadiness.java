@@ -3,17 +3,10 @@ package com.fa26se088.filmlink.service.lab.impl;
 import com.fa26se088.filmlink.service.lab.MachineReadiness;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Component;
 
 /**
- * TẠM THỜI. MCH-01 cung cấp implementation thật trong domain machine (tầng trên được phép phụ thuộc
- * interface tầng dưới), rồi xoá class này.
- *
- * <p>Đếm thẳng trên bảng {@code machines} bằng một câu SQL native, không có entity hay repository
- * của {@code machines} trong domain {@code lab}. Chạy trong transaction của service gọi (JPA và
- * {@link JdbcTemplate} dùng chung connection).
+ * Đã được thay thế bởi {@code MachineReadinessImpl} trong domain {@code machine} (UC68, BR-57).
  */
-@Component
 @RequiredArgsConstructor
 public class SqlMachineReadiness implements MachineReadiness {
 
