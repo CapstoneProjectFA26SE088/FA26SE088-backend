@@ -9,6 +9,7 @@ import com.fa26se088.filmlink.exception.DeliveryProviderException;
 import com.fa26se088.filmlink.exception.InvalidWebhookException;
 import com.fa26se088.filmlink.mapper.delivery.GhnStatusMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
@@ -28,7 +29,9 @@ import java.util.*;
 import static jakarta.xml.bind.DatatypeConverter.parseTime;
 import static org.springframework.http.RequestEntity.post;
 // Gọi Ghn API
+// Chỉ tạo bean khi bật GHN (GHN_ENABLED=true), giống GhnClient; CI không cần biến GHN_*.
 @Service
+@ConditionalOnProperty(prefix = "delivery.ghn", name = "enabled", havingValue = "true")
 public class GhnDeliveryProvider implements DeliveryProvider{
 
     private static final int SERVICE_TYPE_ECOMMERCE = 2;

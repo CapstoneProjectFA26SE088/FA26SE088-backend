@@ -1,7 +1,7 @@
 package com.fa26se088.filmlink.service.payment;
 
-import com.fa26se088.filmlink.dto.payment.request.CreateOrderPaymentRequest;
 import com.fa26se088.filmlink.dto.payment.request.CreateVnPayPaymentUrlRequest;
+import com.fa26se088.filmlink.dto.payment.response.PaymentLink;
 import com.fa26se088.filmlink.dto.payment.response.PaymentResponse;
 import com.fa26se088.filmlink.dto.payment.response.PaymentReturnResponse;
 import com.fa26se088.filmlink.dto.payment.response.VnPayIpnResponse;
@@ -11,24 +11,34 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Service quản lý thanh toán trực tuyến và đối soát (UC30, BR-09).
+ * Service thanh toán trực tuyến và đối soát (UC30, BR-09, BR-18).
+ *
+ * <p>Năm method đầu là contract SPEC-00 §4.5: domain {@code order} (tầng 3) và {@code marketplace}
+ * gọi xuống; payment (tầng 2) không đọc đơn hay giao dịch bán, số tiền do caller tính và truyền vào.
  */
 public interface PaymentService {
 
-  /**
-   * Tạo phiên thanh toán trực tuyến (VNPay) cho đơn hàng (UC30).
-   *
-   * @param request thông tin tạo thanh toán cho đơn hàng
-   * @param currentAccount tài khoản đang đăng nhập (phải là chủ đơn hoặc Admin)
-   * @param clientIp IP người thanh toán
-   * @return {@link PaymentResponse} chứa URL thanh toán
-   */
-  PaymentResponse createOrderPaymentUrl(
-      CreateOrderPaymentRequest request, AuthenticatedAccount currentAccount, String clientIp);
+  /** UC30: purpose ORDER_PAYMENT, method VNPAY, status PENDING; returns the VNPay URL (valid 15 min). */
+  PaymentLink createOrderPayment(
+      Long serviceOrderId, Long payerAccountId, long amountVnd, String clientIp);
+
+  /** BR-18: purpose ORDER_TOP_UP. */
+  PaymentLink createOrderTopUp(
+      Long serviceOrderId, Long payerAccountId, long amountVnd, String clientIp);
+
+  /** BR-18/BR-38/BR-39: purpose ORDER_REFUND (direction OUT). */
+  void createOrderRefund(Long serviceOrderId, long amountVnd, String reason);
+
+  /** UC62: purpose SALE_PAYMENT. */
+  PaymentLink createSalePayment(
+      Long consignmentSaleId, Long buyerAccountId, long amountVnd, String clientIp);
+
+  /** Sum of SUCCEEDED payments IN minus OUT for the order. */
+  long netPaidForOrder(Long serviceOrderId);
 
   /**
-   * Xử lý webhook IPN (server-to-server callback) từ cổng thanh toán VNPay (UC30).
-   * Đảm bảo tính idempotent tuyệt đối (BR-09, Q9, Q10).
+   * Xử lý IPN (server-to-server) từ VNPay (UC30). Idempotent: IPN lặp lại không đổi trạng thái
+   * (BR-09). Thành công thì publish {@code PaymentSucceededEvent} trong cùng transaction.
    *
    * @param params tập tham số callback từ VNPay
    * @return {@link VnPayIpnResponse} theo chuẩn của VNPay
@@ -36,49 +46,29 @@ public interface PaymentService {
   VnPayIpnResponse processVnPayIpn(Map<String, String> params);
 
   /**
-   * Xử lý khi người dùng được redirect về trang return URL (SRS 4.1).
-   * Chỉ kiểm tra chữ ký và hiển thị kết quả, KHÔNG cập nhật trạng thái đơn.
+   * Người dùng được redirect về return URL (SRS 4.1). Chỉ kiểm chữ ký và trả kết quả, không đổi
+   * trạng thái (trạng thái chỉ do IPN đổi).
    *
    * @param params tập tham số redirect từ VNPay
    * @return {@link PaymentReturnResponse} thông tin hiển thị cho FE
    */
   PaymentReturnResponse processVnPayReturn(Map<String, String> params);
 
-  /**
-   * Tra cứu chi tiết thanh toán theo ID (Admin hoặc chủ đơn).
-   */
+  /** Tra cứu chi tiết thanh toán theo ID (Admin hoặc người thanh toán). */
   PaymentResponse getPaymentById(Long id, AuthenticatedAccount currentAccount);
 
-  /**
-   * Tra cứu chi tiết thanh toán theo mã giao dịch nội bộ (Admin hoặc chủ đơn).
-   */
+  /** Tra cứu chi tiết thanh toán theo mã giao dịch nội bộ (Admin hoặc người thanh toán). */
   PaymentResponse getPaymentByTransactionCode(
       String transactionCode, AuthenticatedAccount currentAccount);
 
   /**
-   * Lấy danh sách mọi khoản thanh toán / hoàn tiền của một đơn hàng.
+   * Lịch sử thanh toán / hoàn tiền của một đơn. Quyền kiểm bằng dữ liệu payment: Admin, hoặc mọi
+   * payment của đơn có {@code counterparty_account_id} = người gọi.
    */
   List<PaymentResponse> getPaymentsByOrderId(
       Long serviceOrderId, AuthenticatedAccount currentAccount);
 
-  /**
-   * Tính tổng số tiền mà khách đã thanh toán thành công (hợp lệ) cho đơn hàng.
-   */
-  Long getTotalPaidAmount(Long serviceOrderId);
-
-  /**
-   * Thực hiện hoàn tiền tự động hoặc ghi nhận yêu cầu hoàn tiền cho đơn hàng (UC22, BR-38, BR-39).
-   *
-   * @param serviceOrderId ID đơn hàng
-   * @param refundAmount Số tiền hoàn (VND)
-   * @param reason Lý do hoàn tiền
-   * @return PaymentResponse của khoản hoàn tiền (PaymentDirection.OUT, PaymentPurpose.ORDER_REFUND)
-   */
-  PaymentResponse refundOrder(Long serviceOrderId, Long refundAmount, String reason);
-
-  /**
-   * SPIKE — tạo URL sandbox thử nghiệm không liên kết đơn hàng.
-   */
+  /** SPIKE — tạo URL sandbox thử nghiệm không liên kết đơn hàng. */
   VnPayPaymentUrlResponse createVnPaySandboxUrl(
       CreateVnPayPaymentUrlRequest request, String clientIp);
 }

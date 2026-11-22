@@ -1,6 +1,5 @@
 package com.fa26se088.filmlink.controller.payment;
 
-import com.fa26se088.filmlink.dto.payment.request.CreateOrderPaymentRequest;
 import com.fa26se088.filmlink.dto.payment.request.CreateVnPayPaymentUrlRequest;
 import com.fa26se088.filmlink.dto.payment.response.PaymentResponse;
 import com.fa26se088.filmlink.dto.payment.response.PaymentReturnResponse;
@@ -16,7 +15,6 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,7 +22,6 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -38,18 +35,6 @@ import org.springframework.web.bind.annotation.RestController;
 public class PaymentController {
 
   private final PaymentService paymentService;
-
-  @PostMapping
-  @ResponseStatus(HttpStatus.CREATED)
-  @Operation(
-      summary = "Tạo URL thanh toán trực tuyến cho đơn hàng (UC30)",
-      description = "Chủ đơn hàng tạo phiên thanh toán VNPay. Trả về paymentUrl hiệu lực trong 15 phút.")
-  public PaymentResponse createOrderPaymentUrl(
-      @Valid @RequestBody CreateOrderPaymentRequest request,
-      @AuthenticationPrincipal AuthenticatedAccount account,
-      HttpServletRequest httpRequest) {
-    return paymentService.createOrderPaymentUrl(request, account, httpRequest.getRemoteAddr());
-  }
 
   @PostMapping("/vnpay/ipn")
   @Operation(
@@ -93,7 +78,9 @@ public class PaymentController {
   }
 
   @GetMapping("/by-order/{serviceOrderId}")
-  @Operation(summary = "Lấy toàn bộ lịch sử thanh toán / hoàn tiền của một đơn hàng")
+  @Operation(
+      summary = "Lấy toàn bộ lịch sử thanh toán / hoàn tiền của một đơn hàng",
+      description = "Admin, hoặc người gọi là người thanh toán của các giao dịch của đơn.")
   public List<PaymentResponse> getPaymentsByOrderId(
       @PathVariable Long serviceOrderId, @AuthenticationPrincipal AuthenticatedAccount account) {
     return paymentService.getPaymentsByOrderId(serviceOrderId, account);

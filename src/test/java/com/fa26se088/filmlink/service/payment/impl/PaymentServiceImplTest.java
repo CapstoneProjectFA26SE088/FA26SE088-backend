@@ -14,16 +14,14 @@ import static org.mockito.Mockito.when;
 import com.fa26se088.filmlink.client.payment.PaymentGatewayClient;
 import com.fa26se088.filmlink.client.payment.VnPayClient;
 import com.fa26se088.filmlink.client.payment.VnPayProperties;
-import com.fa26se088.filmlink.dto.payment.request.CreateOrderPaymentRequest;
 import com.fa26se088.filmlink.dto.payment.request.CreateVnPayPaymentUrlRequest;
-import com.fa26se088.filmlink.dto.payment.response.PaymentResponse;
+import com.fa26se088.filmlink.dto.payment.response.PaymentLink;
 import com.fa26se088.filmlink.dto.payment.response.PaymentReturnResponse;
 import com.fa26se088.filmlink.dto.payment.response.VnPayIpnResponse;
 import com.fa26se088.filmlink.entity.account.enums.UserAccountRole;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
-import com.fa26se088.filmlink.entity.order.ServiceOrder;
-import com.fa26se088.filmlink.entity.order.enums.ServiceOrderStatus;
+import com.fa26se088.filmlink.entity.masterdata.enums.SystemParameterKey;
 import com.fa26se088.filmlink.entity.payment.Payment;
 import com.fa26se088.filmlink.entity.payment.PaymentGatewayEvent;
 import com.fa26se088.filmlink.entity.payment.enums.PaymentDirection;
@@ -33,11 +31,11 @@ import com.fa26se088.filmlink.entity.payment.enums.PaymentStatus;
 import com.fa26se088.filmlink.exception.BusinessException;
 import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.mapper.payment.PaymentMapper;
-import com.fa26se088.filmlink.repository.order.ServiceOrderRepository;
 import com.fa26se088.filmlink.repository.payment.PaymentGatewayEventRepository;
 import com.fa26se088.filmlink.repository.payment.PaymentRepository;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
+import com.fa26se088.filmlink.service.masterdata.SystemParameterService;
 import com.fa26se088.filmlink.service.payment.event.PaymentSucceededEvent;
 import java.time.Clock;
 import java.time.Instant;
@@ -65,7 +63,7 @@ class PaymentServiceImplTest {
 
   @Mock private PaymentRepository paymentRepository;
   @Mock private PaymentGatewayEventRepository paymentGatewayEventRepository;
-  @Mock private ServiceOrderRepository serviceOrderRepository;
+  @Mock private SystemParameterService systemParameterService;
   @Mock private PaymentGatewayClient paymentGatewayClient;
   @Mock private AuditLogService auditLogService;
   @Mock private ApplicationEventPublisher eventPublisher;
@@ -90,10 +88,10 @@ class PaymentServiceImplTest {
         new PaymentServiceImpl(
             paymentRepository,
             paymentGatewayEventRepository,
-            serviceOrderRepository,
             paymentGatewayClient,
             paymentMapper,
             auditLogService,
+            systemParameterService,
             eventPublisher,
             CLOCK,
             vnPayClient);
@@ -109,10 +107,10 @@ class PaymentServiceImplTest {
         new PaymentServiceImpl(
             paymentRepository,
             paymentGatewayEventRepository,
-            serviceOrderRepository,
             paymentGatewayClient,
             paymentMapper,
             auditLogService,
+            systemParameterService,
             eventPublisher,
             CLOCK,
             new VnPayClient(new VnPayProperties("", "", PAY_URL, "")));
@@ -138,74 +136,204 @@ class PaymentServiceImplTest {
   }
 
   // -------------------------------------------------------------------------
-  // 2. createOrderPaymentUrl (UC30, BR-09, BR-17)
+  // 2. Contract SPEC-00 §4.5: createOrderPayment / createOrderTopUp / netPaidForOrder / refund
   // -------------------------------------------------------------------------
 
-  @Test
-  @DisplayName("PAY-01: Tạo lượt thanh toán thành công cho đơn AWAITING_PAYMENT")
-  void createOrderPaymentUrl_awaitingPayment_success() {
-    ServiceOrder order = createSampleOrder(1L, 100L, ServiceOrderStatus.AWAITING_PAYMENT, 250_000L);
-    when(serviceOrderRepository.findById(1L)).thenReturn(Optional.of(order));
+  private void stubNewPaymentFlow(long amount) {
     when(paymentGatewayClient.isConfigured()).thenReturn(true);
-    when(paymentGatewayClient.buildPaymentUrl(anyString(), eq(250_000L), anyString(), any(), anyString(), anyString()))
-        .thenReturn("https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?token=mock");
-    when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> {
-      Payment p = i.getArgument(0);
-      ReflectionTestUtils.setField(p, "id", 10L);
-      return p;
-    });
-
-    CreateOrderPaymentRequest request = new CreateOrderPaymentRequest(1L, null, "vn");
-    PaymentResponse response = service.createOrderPaymentUrl(request, photographerAuth, "127.0.0.1");
-
-    assertThat(response).isNotNull();
-    assertThat(response.amountVnd()).isEqualTo(250_000L);
-    assertThat(response.purpose()).isEqualTo(PaymentPurpose.ORDER_PAYMENT);
-    assertThat(response.status()).isEqualTo(PaymentStatus.PENDING);
-    assertThat(response.paymentUrl()).contains("https://sandbox.vnpayment.vn");
-
-    verify(auditLogService).recordSuccess(argThat(entry ->
-        entry.action() == AuditAction.PAYMENT_CREATED
-            && entry.targetType() == AuditTargetType.PAYMENT
-            && entry.targetId().equals(10L)));
+    when(systemParameterService.getInteger(SystemParameterKey.PAYMENT_LINK_TTL_MINUTES))
+        .thenReturn(15);
+    when(paymentRepository.findReusablePending(
+            eq(1L), any(PaymentPurpose.class), eq(PaymentStatus.PENDING), eq(amount), eq(FIXED_NOW)))
+        .thenReturn(Optional.empty());
+    when(paymentGatewayClient.buildPaymentUrl(
+            anyString(), eq(amount), anyString(), any(), anyString(), anyString()))
+        .thenReturn(PAY_URL + "?token=mock");
+    when(paymentRepository.save(any(Payment.class)))
+        .thenAnswer(
+            i -> {
+              Payment p = i.getArgument(0);
+              ReflectionTestUtils.setField(p, "id", 10L);
+              return p;
+            });
   }
 
   @Test
-  @DisplayName("PAY-02: Đơn không tồn tại ném ORDER_NOT_FOUND")
-  void createOrderPaymentUrl_orderNotFound_throws() {
-    when(serviceOrderRepository.findById(999L)).thenReturn(Optional.empty());
+  @DisplayName("UC30: createOrderPayment tạo payment PENDING (IN, VNPAY) và trả URL, hạn = TTL tham số")
+  void createOrderPayment_createsPendingAndUrl() {
+    stubNewPaymentFlow(250_000L);
 
-    CreateOrderPaymentRequest request = new CreateOrderPaymentRequest(999L, null, "vn");
+    PaymentLink link = service.createOrderPayment(1L, 100L, 250_000L, "127.0.0.1");
 
-    assertThatThrownBy(() -> service.createOrderPaymentUrl(request, photographerAuth, "127.0.0.1"))
-        .isInstanceOfSatisfying(BusinessException.class, ex ->
-            assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ORDER_NOT_FOUND));
+    ArgumentCaptor<Payment> captor = ArgumentCaptor.forClass(Payment.class);
+    verify(paymentRepository).save(captor.capture());
+    Payment saved = captor.getValue();
+    assertThat(saved.getPurpose()).isEqualTo(PaymentPurpose.ORDER_PAYMENT);
+    assertThat(saved.getDirection()).isEqualTo(PaymentDirection.IN);
+    assertThat(saved.getMethod()).isEqualTo(PaymentMethod.VNPAY);
+    assertThat(saved.getStatus()).isEqualTo(PaymentStatus.PENDING);
+    assertThat(saved.getAmountVnd()).isEqualTo(250_000L);
+    assertThat(saved.getServiceOrderId()).isEqualTo(1L);
+    assertThat(saved.getCounterpartyAccountId()).isEqualTo(100L);
+    assertThat(saved.getPaymentUrlExpiresAt()).isEqualTo(FIXED_NOW.plusSeconds(15 * 60));
+
+    assertThat(link.paymentId()).isEqualTo(10L);
+    assertThat(link.transactionCode()).isEqualTo(saved.getTransactionCode());
+    assertThat(link.paymentUrl()).startsWith(PAY_URL);
+    assertThat(link.expiresAt()).isEqualTo(FIXED_NOW.plusSeconds(15 * 60));
+
+    verify(auditLogService)
+        .recordSuccess(
+            argThat(
+                entry ->
+                    entry.action() == AuditAction.PAYMENT_CREATED
+                        && entry.targetType() == AuditTargetType.PAYMENT
+                        && entry.targetId().equals(10L)));
   }
 
   @Test
-  @DisplayName("PAY-02: Người khác tạo thanh toán bị ném ORDER_ACCESS_DENIED")
-  void createOrderPaymentUrl_otherUser_throwsAccessDenied() {
-    ServiceOrder order = createSampleOrder(1L, 100L, ServiceOrderStatus.AWAITING_PAYMENT, 250_000L);
-    when(serviceOrderRepository.findById(1L)).thenReturn(Optional.of(order));
+  @DisplayName("UC30: gọi createOrderPayment lần 2 khi PENDING còn hạn trả lại cùng paymentId, không tạo mới")
+  void createOrderPayment_secondCallWhilePending_returnsSamePayment() {
+    Payment pending = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.PENDING);
+    Instant expiresAt = FIXED_NOW.plusSeconds(600);
+    pending.setPaymentUrlExpiresAt(expiresAt);
+    when(paymentGatewayClient.isConfigured()).thenReturn(true);
+    when(paymentRepository.findReusablePending(
+            1L, PaymentPurpose.ORDER_PAYMENT, PaymentStatus.PENDING, 250_000L, FIXED_NOW))
+        .thenReturn(Optional.of(pending));
+    when(paymentGatewayClient.buildPaymentUrl(
+            eq("TXN123456789"), eq(250_000L), anyString(), any(), anyString(), anyString()))
+        .thenReturn(PAY_URL + "?token=again");
 
-    CreateOrderPaymentRequest request = new CreateOrderPaymentRequest(1L, null, "vn");
+    PaymentLink link = service.createOrderPayment(1L, 100L, 250_000L, "127.0.0.1");
 
-    assertThatThrownBy(() -> service.createOrderPaymentUrl(request, otherAuth, "127.0.0.1"))
-        .isInstanceOfSatisfying(BusinessException.class, ex ->
-            assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ORDER_ACCESS_DENIED));
+    assertThat(link.paymentId()).isEqualTo(10L);
+    assertThat(link.transactionCode()).isEqualTo("TXN123456789");
+    assertThat(link.expiresAt()).isEqualTo(expiresAt);
+    verify(paymentRepository, never()).save(any());
   }
 
   @Test
-  @DisplayName("PAY-02: Đơn sai trạng thái (DELIVERED) ném ORDER_INVALID_STATE")
-  void createOrderPaymentUrl_invalidState_throws() {
-    ServiceOrder order = createSampleOrder(1L, 100L, ServiceOrderStatus.DELIVERED, 250_000L);
-    when(serviceOrderRepository.findById(1L)).thenReturn(Optional.of(order));
+  @DisplayName("BR-18: createOrderTopUp tạo payment purpose ORDER_TOP_UP")
+  void createOrderTopUp_createsTopUpPayment() {
+    stubNewPaymentFlow(50_000L);
 
-    CreateOrderPaymentRequest request = new CreateOrderPaymentRequest(1L, null, "vn");
+    service.createOrderTopUp(1L, 100L, 50_000L, "127.0.0.1");
 
-    assertThatThrownBy(() -> service.createOrderPaymentUrl(request, photographerAuth, "127.0.0.1"))
-        .isInstanceOfSatisfying(BusinessException.class, ex ->
-            assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.ORDER_INVALID_STATE));
+    ArgumentCaptor<Payment> captor = ArgumentCaptor.forClass(Payment.class);
+    verify(paymentRepository).save(captor.capture());
+    assertThat(captor.getValue().getPurpose()).isEqualTo(PaymentPurpose.ORDER_TOP_UP);
+    assertThat(captor.getValue().getDirection()).isEqualTo(PaymentDirection.IN);
+  }
+
+  @Test
+  @DisplayName("UC30: số tiền <= 0 bị từ chối")
+  void createOrderPayment_nonPositiveAmount_throws() {
+    assertThatThrownBy(() -> service.createOrderPayment(1L, 100L, 0L, "127.0.0.1"))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_INVALID_STATE));
+  }
+
+  @Test
+  @DisplayName("Cổng thanh toán chưa cấu hình -> PAYMENT_GATEWAY_NOT_CONFIGURED")
+  void createOrderPayment_gatewayNotConfigured_throws() {
+    when(paymentGatewayClient.isConfigured()).thenReturn(false);
+
+    assertThatThrownBy(() -> service.createOrderPayment(1L, 100L, 250_000L, "127.0.0.1"))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_GATEWAY_NOT_CONFIGURED));
+  }
+
+  @Test
+  @DisplayName("netPaidForOrder = tổng IN SUCCEEDED − tổng OUT SUCCEEDED (bỏ PENDING / FAILED)")
+  void netPaidForOrder_succeededInMinusSucceededOut() {
+    Payment paid = createSamplePayment(1L, "A", 250_000L, PaymentStatus.SUCCEEDED);
+    Payment topUp = createSamplePayment(2L, "B", 50_000L, PaymentStatus.SUCCEEDED);
+    topUp.setPurpose(PaymentPurpose.ORDER_TOP_UP);
+    Payment pendingTopUp = createSamplePayment(3L, "C", 70_000L, PaymentStatus.PENDING);
+    Payment failed = createSamplePayment(4L, "D", 90_000L, PaymentStatus.FAILED);
+    Payment refund = createSamplePayment(5L, "E", 30_000L, PaymentStatus.SUCCEEDED);
+    refund.setPurpose(PaymentPurpose.ORDER_REFUND);
+    refund.setDirection(PaymentDirection.OUT);
+    Payment manualRefund = createSamplePayment(6L, "F", 20_000L, PaymentStatus.AWAITING_MANUAL);
+    manualRefund.setPurpose(PaymentPurpose.ORDER_REFUND);
+    manualRefund.setDirection(PaymentDirection.OUT);
+    when(paymentRepository.findByServiceOrderId(1L))
+        .thenReturn(List.of(paid, topUp, pendingTopUp, failed, refund, manualRefund));
+
+    assertThat(service.netPaidForOrder(1L)).isEqualTo(270_000L);
+  }
+
+  @Test
+  @DisplayName("BR-38: createOrderRefund tạo ORDER_REFUND (OUT) liên kết khoản IN đã thành công")
+  void createOrderRefund_gatewayAccepts_succeeded() {
+    Payment origin = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.SUCCEEDED);
+    origin.setGatewayTransactionNo("VNPGW1");
+    when(paymentRepository.findByServiceOrderIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(origin));
+    when(paymentGatewayClient.refund("TXN123456789", "VNPGW1", 50_000L, "huy don"))
+        .thenReturn(true);
+    when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> i.getArgument(0));
+
+    service.createOrderRefund(1L, 50_000L, "huy don");
+
+    ArgumentCaptor<Payment> captor = ArgumentCaptor.forClass(Payment.class);
+    verify(paymentRepository).save(captor.capture());
+    Payment refund = captor.getValue();
+    assertThat(refund.getPurpose()).isEqualTo(PaymentPurpose.ORDER_REFUND);
+    assertThat(refund.getDirection()).isEqualTo(PaymentDirection.OUT);
+    assertThat(refund.getStatus()).isEqualTo(PaymentStatus.SUCCEEDED);
+    assertThat(refund.getRefundedPaymentId()).isEqualTo(10L);
+    assertThat(refund.getCounterpartyAccountId()).isEqualTo(100L);
+  }
+
+  @Test
+  @DisplayName("BR-39: cổng hoàn tiền lỗi -> refund AWAITING_MANUAL cho Admin")
+  void createOrderRefund_gatewayError_awaitingManual() {
+    Payment origin = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.SUCCEEDED);
+    when(paymentRepository.findByServiceOrderIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(origin));
+    when(paymentGatewayClient.refund(anyString(), any(), anyLong(), anyString()))
+        .thenThrow(new IllegalStateException("timeout"));
+    when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> i.getArgument(0));
+
+    service.createOrderRefund(1L, 50_000L, "huy don");
+
+    ArgumentCaptor<Payment> captor = ArgumentCaptor.forClass(Payment.class);
+    verify(paymentRepository).save(captor.capture());
+    assertThat(captor.getValue().getStatus()).isEqualTo(PaymentStatus.AWAITING_MANUAL);
+  }
+
+  @Test
+  @DisplayName("createOrderRefund khi đơn chưa có khoản thanh toán thành công -> PAYMENT_INVALID_STATE")
+  void createOrderRefund_noSucceededPayment_throws() {
+    when(paymentRepository.findByServiceOrderIdOrderByCreatedAtDesc(1L)).thenReturn(List.of());
+
+    assertThatThrownBy(() -> service.createOrderRefund(1L, 50_000L, "huy don"))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_INVALID_STATE));
+  }
+
+  @Test
+  @DisplayName("createSalePayment chưa làm (P-07) -> UnsupportedOperationException")
+  void createSalePayment_notYetImplemented() {
+    assertThatThrownBy(() -> service.createSalePayment(1L, 100L, 100_000L, "127.0.0.1"))
+        .isInstanceOf(UnsupportedOperationException.class);
+  }
+
+  @Test
+  @DisplayName("by-order: người không phải counterparty bị PAYMENT_ACCESS_DENIED; Admin xem được")
+  void getPaymentsByOrderId_accessByPaymentData() {
+    Payment payment = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.SUCCEEDED);
+    when(paymentRepository.findByServiceOrderIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(payment));
+
+    assertThat(service.getPaymentsByOrderId(1L, photographerAuth)).hasSize(1);
+    assertThat(service.getPaymentsByOrderId(1L, adminAuth)).hasSize(1);
+    assertThatThrownBy(() -> service.getPaymentsByOrderId(1L, otherAuth))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_ACCESS_DENIED));
   }
 
   // -------------------------------------------------------------------------
@@ -246,8 +374,11 @@ class PaymentServiceImplTest {
     verify(eventPublisher).publishEvent(eventCaptor.capture());
     PaymentSucceededEvent event = eventCaptor.getValue();
     assertThat(event.paymentId()).isEqualTo(10L);
-    assertThat(event.transactionCode()).isEqualTo("TXN123456789");
+    assertThat(event.purpose()).isEqualTo(PaymentPurpose.ORDER_PAYMENT);
+    assertThat(event.serviceOrderId()).isEqualTo(1L);
+    assertThat(event.consignmentSaleId()).isNull();
     assertThat(event.amountVnd()).isEqualTo(250_000L);
+    assertThat(event.succeededAt()).isEqualTo(FIXED_NOW);
   }
 
   @Test
@@ -375,17 +506,6 @@ class PaymentServiceImplTest {
   // -------------------------------------------------------------------------
   // Helper methods
   // -------------------------------------------------------------------------
-
-  private ServiceOrder createSampleOrder(Long id, Long photographerId, ServiceOrderStatus status, Long estimatedTotal) {
-    ServiceOrder order = new ServiceOrder();
-    ReflectionTestUtils.setField(order, "id", id);
-    order.setOrderCode("ORD-20261112-001");
-    order.setPhotographerAccountId(photographerId);
-    order.setFilmLabId(1L);
-    order.setStatus(status);
-    order.setEstimatedTotalVnd(estimatedTotal);
-    return order;
-  }
 
   private Payment createSamplePayment(Long id, String txnRef, Long amount, PaymentStatus status) {
     Payment payment = new Payment();

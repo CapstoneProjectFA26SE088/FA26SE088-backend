@@ -1,6 +1,5 @@
 package com.fa26se088.filmlink.controller.payment;
 
-import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -9,7 +8,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.fa26se088.filmlink.dto.payment.request.CreateOrderPaymentRequest;
 import com.fa26se088.filmlink.dto.payment.response.PaymentResponse;
 import com.fa26se088.filmlink.dto.payment.response.PaymentReturnResponse;
 import com.fa26se088.filmlink.dto.payment.response.VnPayIpnResponse;
@@ -21,9 +19,8 @@ import com.fa26se088.filmlink.entity.payment.enums.PaymentStatus;
 import com.fa26se088.filmlink.exception.GlobalExceptionHandler;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.payment.PaymentService;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
-import java.util.Map;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,7 +28,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.MethodParameter;
-import org.springframework.http.MediaType;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -44,7 +40,6 @@ import org.springframework.web.method.support.ModelAndViewContainer;
 class PaymentControllerTest {
 
   private MockMvc mockMvc;
-  private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Mock private PaymentService paymentService;
 
@@ -93,24 +88,6 @@ class PaymentControllerTest {
         .paymentUrl("https://sandbox.vnpayment.vn/paymentv2/vpcpay.html?token=123")
         .createdAt(Instant.now())
         .build();
-  }
-
-  @Test
-  @DisplayName("POST /api/v1/payments thành công trả 201 và URL thanh toán")
-  void createOrderPaymentUrl_success_returns201() throws Exception {
-    CreateOrderPaymentRequest request = new CreateOrderPaymentRequest(10L, "NCB", "vn");
-    when(paymentService.createOrderPaymentUrl(any(), any(), any()))
-        .thenReturn(samplePaymentResponse());
-
-    mockMvc
-        .perform(
-            post("/api/v1/payments")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request)))
-        .andExpect(status().isCreated())
-        .andExpect(jsonPath("$.transactionCode").value("TXN123456789"))
-        .andExpect(jsonPath("$.amountVnd").value(250000))
-        .andExpect(jsonPath("$.paymentUrl").value(containsString("https://sandbox.vnpayment.vn")));
   }
 
   @Test
@@ -165,5 +142,24 @@ class PaymentControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.id").value(1))
         .andExpect(jsonPath("$.transactionCode").value("TXN123456789"));
+  }
+
+  @Test
+  @DisplayName("POST /api/v1/payments đã bỏ (tạo link thuộc order, T-04) -> không còn handler")
+  void createPaymentEndpoint_removed() throws Exception {
+    mockMvc.perform(post("/api/v1/payments")).andExpect(status().is4xxClientError());
+  }
+
+  @Test
+  @DisplayName("GET /api/v1/payments/by-order/{id} trả lịch sử thanh toán của đơn")
+  void getPaymentsByOrderId_success_returns200() throws Exception {
+    when(paymentService.getPaymentsByOrderId(eq(10L), any()))
+        .thenReturn(List.of(samplePaymentResponse()));
+
+    mockMvc
+        .perform(get("/api/v1/payments/by-order/10"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].serviceOrderId").value(10))
+        .andExpect(jsonPath("$[0].transactionCode").value("TXN123456789"));
   }
 }

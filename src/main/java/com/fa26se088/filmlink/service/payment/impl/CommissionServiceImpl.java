@@ -1,13 +1,12 @@
 package com.fa26se088.filmlink.service.payment.impl;
 
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
+import com.fa26se088.filmlink.dto.payment.ClosedOrderCommission;
 import com.fa26se088.filmlink.dto.payment.response.CommissionResponse;
 import com.fa26se088.filmlink.entity.account.enums.UserAccountRole;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
-import com.fa26se088.filmlink.entity.order.ServiceOrder;
-import com.fa26se088.filmlink.entity.order.enums.OrderPaymentMethod;
 import com.fa26se088.filmlink.entity.payment.Commission;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionCollectionMode;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionKind;
@@ -23,9 +22,7 @@ import com.fa26se088.filmlink.service.payment.CommissionService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
-import java.time.Instant;
 import java.util.Objects;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -38,6 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class CommissionServiceImpl implements CommissionService {
 
+  private static final String PAYMENT_METHOD_ONLINE = "ONLINE";
   private static final BigDecimal DEFAULT_COMMISSION_RATE = new BigDecimal("10.00"); // 10% mặc định theo BR-10
 
   private final CommissionRepository commissionRepository;
@@ -46,72 +44,78 @@ public class CommissionServiceImpl implements CommissionService {
   private final AuditLogService auditLogService;
   private final Clock clock;
 
+  /**
+   * BR-10/BR-11: ghi hoa hồng khi đơn CLOSED, gọi từ {@code order} trong cùng transaction (SPEC-00
+   * §4.6). Idempotent theo đơn: đơn đã có commission ORDER thì không tạo thêm.
+   *
+   * <p>ONLINE: tiền qua nền tảng, khấu trừ tại nguồn ({@code DEDUCTED}, {@code SETTLED} — DB
+   * {@code ck_commissions_billing} bắt buộc DEDUCTED đi với SETTLED). PAY_AT_LAB / COD: ghi nợ cho lab
+   * ({@code DEBT}, {@code OPEN}) chờ job chốt kỳ gom vào Commission Debt.
+   */
   @Override
   @Transactional
-  public CommissionResponse createCommissionForOrder(ServiceOrder order) {
-    Long orderId = order.getId();
+  public void recordForClosedOrder(ClosedOrderCommission command) {
+    Long orderId = command.serviceOrderId();
 
-    // Idempotent: Kiểm tra đã tồn tại Commission cho order này chưa
-    Optional<Commission> existing = commissionRepository.findByServiceOrderIdAndKind(orderId, CommissionKind.ORDER);
-    if (existing.isPresent()) {
+    if (commissionRepository.existsByServiceOrderIdAndKind(orderId, CommissionKind.ORDER)) {
       log.info("[CommissionService] Idempotent hit: Đơn #{} đã có hoa hồng", orderId);
-      return commissionMapper.toResponse(existing.get());
+      return;
     }
 
-    // Giá tính hoa hồng là finalTotalVnd (nếu có), fallback về estimatedTotalVnd
-    long baseAmount = order.getFinalTotalVnd() != null ? order.getFinalTotalVnd() : order.getEstimatedTotalVnd();
-    if (baseAmount < 0) {
-      baseAmount = 0;
-    }
+    long baseAmount = Math.max(0, command.serviceValueVnd());
 
-    // Tính hoa hồng theo tỷ lệ (mặc định 10%)
+    // Tỷ lệ mặc định 10% (BR-10); rule theo gói / theo lab làm ở P-04
     BigDecimal rate = DEFAULT_COMMISSION_RATE;
-    long commissionAmount = BigDecimal.valueOf(baseAmount)
-        .multiply(rate)
-        .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP)
-        .longValue();
+    long commissionAmount =
+        BigDecimal.valueOf(baseAmount)
+            .multiply(rate)
+            .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP)
+            .longValue();
 
     CommissionCollectionMode mode;
     CommissionStatus status;
-
-    if (order.getPaymentMethod() == OrderPaymentMethod.ONLINE) {
-      // Đơn ONLINE: khấu trừ trực tiếp tại nguồn -> SETTLED
+    if (PAYMENT_METHOD_ONLINE.equals(command.paymentMethod())) {
       mode = CommissionCollectionMode.DEDUCTED;
       status = CommissionStatus.SETTLED;
     } else {
-      // Đơn COD hoặc Pay-at-Lab: ghi nhận nợ cho lab -> OPEN (chờ job cuối tháng gom vào kỳ nợ)
       mode = CommissionCollectionMode.DEBT;
       status = CommissionStatus.OPEN;
     }
 
-    Instant now = clock.instant();
-
     Commission commission = new Commission();
     commission.setKind(CommissionKind.ORDER);
-    commission.setFilmLabId(order.getFilmLabId());
+    commission.setFilmLabId(command.filmLabId());
     commission.setServiceOrderId(orderId);
     commission.setBaseAmountVnd(baseAmount);
     commission.setRatePercent(rate);
     commission.setAmountVnd(commissionAmount);
     commission.setCollectionMode(mode);
     commission.setStatus(status);
-    commission.setEligibleAt(order.getClosedAt() != null ? order.getClosedAt() : now);
+    commission.setEligibleAt(command.closedAt() != null ? command.closedAt() : clock.instant());
 
     Commission saved = commissionRepository.save(commission);
 
-    auditLogService.recordSuccess(new AuditEntry(
-        AuditAction.COMMISSION_RECORDED,
-        AuditTargetType.COMMISSION,
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.COMMISSION_RECORDED,
+            AuditTargetType.COMMISSION,
+            saved.getId(),
+            "Ghi nhận hoa hồng "
+                + commissionAmount
+                + " VND cho đơn #"
+                + orderId
+                + " ("
+                + mode
+                + ")",
+            null,
+            null));
+
+    log.info(
+        "[CommissionService] Ghi nhận Commission: id={}, orderId={}, amount={} VND, mode={}",
         saved.getId(),
-        "Ghi nhận hoa hồng " + commissionAmount + " VND cho đơn " + order.getOrderCode() + " (" + mode + ")",
-        null,
-        null
-    ));
-
-    log.info("[CommissionService] Ghi nhận Commission thành công: id={}, orderId={}, amount={} VND, mode={}",
-        saved.getId(), orderId, commissionAmount, mode);
-
-    return commissionMapper.toResponse(saved);
+        orderId,
+        commissionAmount,
+        mode);
   }
 
   @Override

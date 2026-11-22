@@ -28,6 +28,12 @@ public enum AuditAction {
   /** UC08: Admin từ chối đơn đăng ký mở Film Lab. */
   LAB_APPLICATION_REJECTED,
 
+  /** ACC-09: Cập nhật thông tin cá nhân tài khoản. */
+  ACCOUNT_PROFILE_UPDATED,
+
+  /** ACC-09: Vô hiệu hoá / xoá mềm tài khoản (chuyển trạng thái sang INACTIVE). */
+  ACCOUNT_DEACTIVATED,
+
   // --- masterdata (MD-02, UC54) ---
   MASTERDATA_CREATED,
   MASTERDATA_UPDATED,
@@ -114,6 +120,17 @@ public enum AuditAction {
    * before/after ghi {@code status}, after thêm {@code cancellationFeeVnd} và {@code reason}.
    */
   ORDER_CANCELLED,
+
+  // --- payment ---
+  PAYMENT_CREATED,
+  PAYMENT_SUCCEEDED,
+  PAYMENT_FAILED,
+  PAYMENT_REFUNDED,
+  COMMISSION_RECORDED,
+  COMMISSION_DEBT_CREATED,
+  COMMISSION_DEBT_SETTLED,
+  PAYOUT_CREATED,
+  PAYOUT_EXECUTED,
 
   // --- ai ---
   /**

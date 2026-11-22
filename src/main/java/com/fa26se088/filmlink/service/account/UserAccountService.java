@@ -122,6 +122,13 @@ public interface UserAccountService {
   void purgeUnverifiedAccounts();
 
   /**
+   * Tạo tài khoản Admin mới (yêu cầu quyền ADMIN, BR-32 ghi audit log).
+   *
+   * <p>Tài khoản có role ADMIN, trạng thái ACTIVE ngay lập tức.
+   */
+  UserAccountResponse createAdmin(CreateAdminRequest request);
+
+  /**
    * ACC-09: Tra cứu thông tin chi tiết tài khoản theo ID (Read).
    *
    * @param id ID tài khoản cần tra cứu

@@ -13,6 +13,8 @@ import java.time.Instant;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Nhật ký callback từ cổng thanh toán (bảng {@code payment_gateway_events}).
@@ -54,6 +56,7 @@ public class PaymentGatewayEvent {
   @Column(name = "is_signature_valid", nullable = false)
   private boolean signatureValid;
 
+  @JdbcTypeCode(SqlTypes.JSON)
   @Column(name = "raw_payload", nullable = false, columnDefinition = "jsonb")
   private String rawPayload;
 

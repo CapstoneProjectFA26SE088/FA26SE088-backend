@@ -1,9 +1,11 @@
 package com.fa26se088.filmlink.service.delivery;
 
+import com.fa26se088.filmlink.exception.BusinessException;
+import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.exception.UnknownProviderException;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
@@ -15,13 +17,18 @@ import java.util.stream.Collectors;
 public class DeliveryProviderRegistry {
     private final Map<String, DeliveryProvider> byCode;
 
-    public DeliveryProviderRegistry(List<DeliveryProvider> providers) {
+    // ObjectProvider: khởi động được cả khi chưa bật provider nào (GHN_ENABLED=false trên CI)
+    public DeliveryProviderRegistry(ObjectProvider<DeliveryProvider> providers) {
         // toUnmodifiableMap ném lỗi nếu hai provider trùng code → phát hiện sớm khi khởi động
-        this.byCode = providers.stream()
+        this.byCode = providers.orderedStream()
                 .collect(Collectors.toUnmodifiableMap(DeliveryProvider::code, Function.identity()));
     }
 
     public DeliveryProvider get(String code) {
+        if (byCode.isEmpty()) {
+            throw new BusinessException(ErrorCode.DELIVERY_PROVIDER_UNAVAILABLE,
+                    "Chưa có Delivery Partner nào được bật.");
+        }
         DeliveryProvider p = byCode.get(code);
         if (p == null) throw new UnknownProviderException(code);
         return p;
