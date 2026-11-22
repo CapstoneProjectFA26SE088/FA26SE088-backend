@@ -1,7 +1,8 @@
 package com.fa26se088.filmlink.controller.account;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.hasItems;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -27,6 +28,7 @@ import com.fa26se088.filmlink.repository.audit.AuditLogRepository;
 import com.fa26se088.filmlink.repository.lab.FilmLabRepository;
 import com.fa26se088.filmlink.security.JwtTokenProvider;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -38,6 +40,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -58,15 +61,25 @@ class AdminLabApplicationControllerIntegrationTest {
   @Autowired private AuditLogRepository auditLogRepository;
   @Autowired private JwtTokenProvider jwtTokenProvider;
   @Autowired private PasswordEncoder passwordEncoder;
+  @Autowired private JdbcTemplate jdbcTemplate;
 
   @MockitoBean private EmailClient emailClient;
 
+  private final List<Long> createdApplicationIds = new ArrayList<>();
+  private final List<Long> createdAccountIds = new ArrayList<>();
   private String adminToken;
   private String photographerToken;
   private Long savedApp1Id;
+  private Long savedApp2Id;
 
   @BeforeEach
   void setUp() {
+    applicationRepository
+        .findByApplicationCode("LA261114000001")
+        .ifPresent(existing -> createdApplicationIds.add(existing.getId()));
+    applicationRepository
+        .findByApplicationCode("LA261114000002")
+        .ifPresent(existing -> createdApplicationIds.add(existing.getId()));
     cleanupTestData();
 
     UserAccount admin =
@@ -82,7 +95,9 @@ class AdminLabApplicationControllerIntegrationTest {
                   user.setStatus(UserAccountStatus.ACTIVE);
                   user.setTermsAcceptedAt(Instant.now());
                   user.setEmailVerifiedAt(Instant.now());
-                  return userAccountRepository.save(user);
+                  UserAccount saved = userAccountRepository.save(user);
+                  createdAccountIds.add(saved.getId());
+                  return saved;
                 });
     adminToken =
         jwtTokenProvider.generateAccessToken(admin.getId(), admin.getEmail(), admin.getRole());
@@ -100,7 +115,9 @@ class AdminLabApplicationControllerIntegrationTest {
                   user.setStatus(UserAccountStatus.ACTIVE);
                   user.setTermsAcceptedAt(Instant.now());
                   user.setEmailVerifiedAt(Instant.now());
-                  return userAccountRepository.save(user);
+                  UserAccount saved = userAccountRepository.save(user);
+                  createdAccountIds.add(saved.getId());
+                  return saved;
                 });
     photographerToken =
         jwtTokenProvider.generateAccessToken(
@@ -132,7 +149,9 @@ class AdminLabApplicationControllerIntegrationTest {
     app2.setDuplicateSuspected(false);
 
     savedApp1Id = applicationRepository.save(app1).getId();
-    applicationRepository.save(app2);
+    savedApp2Id = applicationRepository.save(app2).getId();
+    createdApplicationIds.add(savedApp1Id);
+    createdApplicationIds.add(savedApp2Id);
   }
 
   @AfterEach
@@ -148,14 +167,33 @@ class AdminLabApplicationControllerIntegrationTest {
               filmLabRepository
                   .findByOwnerAccountId(owner.getId())
                   .ifPresent(filmLabRepository::delete);
-              userAccountRepository.delete(owner);
+              createdAccountIds.add(owner.getId());
             });
-    applicationRepository.deleteAll();
+
+    if (!createdApplicationIds.isEmpty()) {
+      for (Long appId : createdApplicationIds) {
+        jdbcTemplate.update(
+            "DELETE FROM film_labs WHERE lab_registration_application_id = ?", appId);
+      }
+      applicationRepository.deleteAllById(createdApplicationIds);
+      createdApplicationIds.clear();
+    }
+
+    if (!createdAccountIds.isEmpty()) {
+      for (Long accountId : createdAccountIds) {
+        jdbcTemplate.update(
+            "DELETE FROM user_accounts WHERE id = ?"
+                + " AND NOT EXISTS (SELECT 1 FROM audit_logs WHERE actor_account_id = ?)",
+            accountId,
+            accountId);
+      }
+      createdAccountIds.clear();
+    }
   }
 
   @Test
   @DisplayName(
-      "Admin xem danh sách đơn lọc theo PENDING_REVIEW -> 200 OK, trả về 1 đơn có isDuplicateSuspected = true")
+      "Admin xem danh sách đơn lọc theo PENDING_REVIEW -> 200 OK, chứa đơn vừa tạo có isDuplicateSuspected = true")
   void getApplications_asAdmin_filteredPendingReview_returns200() throws Exception {
     mockMvc
         .perform(
@@ -163,22 +201,30 @@ class AdminLabApplicationControllerIntegrationTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken)
                 .param("status", "PENDING_REVIEW"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.totalElements", is(1)))
-        .andExpect(jsonPath("$.content", hasSize(1)))
-        .andExpect(jsonPath("$.content[0].applicationCode", is("LA261114000001")))
-        .andExpect(jsonPath("$.content[0].labName", is("Saigon Film Lab")))
-        .andExpect(jsonPath("$.content[0].isDuplicateSuspected", is(true)))
-        .andExpect(jsonPath("$.content[0].status", is("PENDING_REVIEW")));
+        .andExpect(jsonPath("$.content[*].applicationCode", hasItem("LA261114000001")))
+        .andExpect(
+            jsonPath(
+                "$.content[?(@.applicationCode == 'LA261114000001')].labName",
+                hasItem("Saigon Film Lab")))
+        .andExpect(
+            jsonPath(
+                "$.content[?(@.applicationCode == 'LA261114000001')].isDuplicateSuspected",
+                hasItem(true)))
+        .andExpect(
+            jsonPath(
+                "$.content[?(@.applicationCode == 'LA261114000001')].status",
+                hasItem("PENDING_REVIEW")));
   }
 
   @Test
-  @DisplayName("Admin xem danh sách tất cả các đơn -> 200 OK, trả về 2 đơn")
+  @DisplayName("Admin xem danh sách tất cả các đơn -> 200 OK, chứa đủ 2 đơn test vừa tạo")
   void getApplications_asAdmin_all_returns200() throws Exception {
     mockMvc
         .perform(get(API_PATH).header(HttpHeaders.AUTHORIZATION, "Bearer " + adminToken))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.totalElements", is(2)))
-        .andExpect(jsonPath("$.content", hasSize(2)));
+        .andExpect(
+            jsonPath(
+                "$.content[*].applicationCode", hasItems("LA261114000001", "LA261114000002")));
   }
 
   @Test

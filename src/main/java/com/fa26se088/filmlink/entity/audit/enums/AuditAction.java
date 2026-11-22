@@ -28,6 +28,25 @@ public enum AuditAction {
   /** ACC-09: Vô hiệu hoá / xoá mềm tài khoản (chuyển trạng thái sang INACTIVE). */
   ACCOUNT_DEACTIVATED,
 
+  // --- machine (UC68) ---
+  /** UC68: Film Lab Owner khai báo máy tráng / máy scan mới; after ghi mã máy, loại máy, trạng thái. */
+  MACHINE_CREATED,
+
+  /** UC68: Film Lab Owner cập nhật cấu hình máy tráng / máy scan. */
+  MACHINE_UPDATED,
+
+  /** UC68: Film Lab Owner cập nhật cấu hình tham số lập lịch (qcBufferHours, expressDailyCapPercent, expressCommitmentWorkingDays). */
+  LAB_SCHEDULING_SETTINGS_UPDATED,
+
+  /** UC70: Film Lab Owner khai báo sự cố máy tráng / máy scan. */
+  MACHINE_INCIDENT_REPORTED,
+
+  /** UC70: Film Lab Owner xác nhận giải quyết xong sự cố và khôi phục máy ACTIVE. */
+  MACHINE_INCIDENT_RESOLVED,
+
+  /** UC72: Photographer phản hồi thông báo dời ngày hẹn trả do sự cố máy. */
+  SCHEDULE_CHANGE_ANSWERED,
+
   // --- order ---
   ORDER_CREATED,
   ORDER_STATUS_CHANGED,
