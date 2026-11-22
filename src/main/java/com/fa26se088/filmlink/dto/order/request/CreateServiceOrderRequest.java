@@ -1,10 +1,9 @@
 package com.fa26se088.filmlink.dto.order.request;
 
+import com.fa26se088.filmlink.entity.machine.enums.ServiceTier;
 import com.fa26se088.filmlink.entity.order.enums.FilmHandoverMethod;
-import com.fa26se088.filmlink.entity.order.enums.OrderPaymentMethod;
-import com.fa26se088.filmlink.entity.order.enums.ServiceTier;
+import com.fa26se088.filmlink.entity.order.enums.PaymentMethod;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
@@ -12,45 +11,27 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Request payload tạo đơn dịch vụ tráng / scan (ServiceOrder).
+ * UC20: body chung cho báo giá ({@code POST /api/v1/orders/quote}) và tạo đơn ({@code POST
+ * /api/v1/orders}). Giới hạn độ dài khớp cột của {@code service_orders}.
+ *
+ * <p>Service kiểm thêm: {@code idempotencyKey} bắt buộc khi tạo đơn (báo giá thì bỏ qua); PICKUP
+ * bắt buộc địa chỉ, quận, tỉnh, số điện thoại và khung giờ lấy {@code start < end}; các phương án
+ * chưa hỗ trợ (EXPRESS, PARCEL_SHIPPING, COD) bị từ chối 422.
+ *
+ * @param idempotencyKey NFR-REL-02: gửi lại cùng khoá thì trả đơn đã tạo, không tạo đơn mới
+ * @param rolls 1–20 cuộn (UC20)
  */
 public record CreateServiceOrderRequest(
-    @NotNull(message = "Idempotency key không được để trống")
     UUID idempotencyKey,
-
-    @NotNull(message = "filmLabId không được để trống")
-    Long filmLabId,
-
-    @NotNull(message = "Gói dịch vụ không được để trống")
-    ServiceTier serviceTier,
-
-    @NotNull(message = "Phương thức gửi phim không được để trống")
-    FilmHandoverMethod filmHandoverMethod,
-
-    @NotNull(message = "Phương thức thanh toán không được để trống")
-    OrderPaymentMethod paymentMethod,
-
-    @Size(max = 500, message = "Yêu cầu đặc biệt tối đa 500 ký tự")
-    String specialRequest,
-
-    @Size(max = 255, message = "Địa chỉ tối đa 255 ký tự")
-    String customerAddressLine,
-
-    @Size(max = 100, message = "Quận/huyện tối đa 100 ký tự")
-    String customerDistrict,
-
-    @Size(max = 100, message = "Tỉnh/thành phố tối đa 100 ký tự")
-    String customerProvince,
-
-    @Size(max = 15, message = "Số điện thoại tối đa 15 ký tự")
-    String customerPhone,
-
+    @NotNull Long filmLabId,
+    @NotNull ServiceTier serviceTier,
+    @NotNull FilmHandoverMethod filmHandoverMethod,
+    @NotNull PaymentMethod paymentMethod,
+    @Size(max = 500) String specialRequest,
+    @Size(max = 255) String customerAddressLine,
+    @Size(max = 100) String customerDistrict,
+    @Size(max = 100) String customerProvince,
+    @Size(min = 9, max = 15) String customerPhone,
     Instant pickupWindowStartAt,
     Instant pickupWindowEndAt,
-
-    boolean keepNegativesAtLab,
-
-    @NotEmpty(message = "Đơn hàng phải chứa ít nhất một cuộn phim")
-    List<@Valid FilmRollItemRequest> items
-) {}
-
+    @NotNull @Size(min = 1, max = 20) List<@NotNull @Valid FilmRollRequest> rolls) {}

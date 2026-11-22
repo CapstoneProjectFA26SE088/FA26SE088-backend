@@ -10,6 +10,19 @@ package com.fa26se088.filmlink.entity.audit.enums;
 public enum AuditTargetType {
   // --- account ---
   USER_ACCOUNT,
+  LAB_REGISTRATION_APPLICATION,
+
+  // --- masterdata (MD-02, UC54) ---
+  FILM_PROCESS,
+  FILM_FORMAT,
+  SERVICE_TYPE,
+  FILM_STOCK,
+  SYSTEM_PARAMETER,
+
+  // --- lab ---
+  FILM_LAB,
+  /** UC13: gói dịch vụ trong bảng giá của lab. */
+  SERVICE_PACKAGE,
 
   // --- machine (UC68) ---
   /** UC68: thiết bị máy tráng / máy scan của lab. */
@@ -20,11 +33,10 @@ public enum AuditTargetType {
   SCHEDULE_CHANGE,
 
   // --- order ---
+  /** UC20: đơn dịch vụ tráng / scan. */
   SERVICE_ORDER,
 
-  // --- payment ---
-  PAYMENT,
-  COMMISSION,
-  COMMISSION_DEBT,
-  PAYOUT
+  // --- ai ---
+  /** Knowledge Base Entry (ERD #46): chunk của Expert Article đã duyệt (BR-29). */
+  KNOWLEDGE_BASE_ENTRY
 }

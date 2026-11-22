@@ -1,26 +1,26 @@
 package com.fa26se088.filmlink.dto.order.response;
 
+import com.fa26se088.filmlink.entity.machine.enums.ServiceTier;
 import com.fa26se088.filmlink.entity.order.enums.FilmHandoverMethod;
-import com.fa26se088.filmlink.entity.order.enums.OrderPaymentMethod;
+import com.fa26se088.filmlink.entity.order.enums.PaymentMethod;
 import com.fa26se088.filmlink.entity.order.enums.ServiceOrderStatus;
-import com.fa26se088.filmlink.entity.order.enums.ServiceTier;
 import java.time.Instant;
-import java.util.UUID;
+import java.util.List;
 
 /**
- * Response DTO cho ServiceOrder.
+ * Service Order trả cho Photographer (UC20), kèm các cuộn.
+ *
+ * @param payment link thanh toán VNPay cho đơn ONLINE. Hiện luôn {@code null}: contract {@code
+ *     PaymentService.createOrderPayment} (SPEC-00 §4.5) chưa có trên {@code dev}
  */
 public record ServiceOrderResponse(
     Long id,
     String orderCode,
-    UUID idempotencyKey,
-    Long photographerAccountId,
-    Long filmLabId,
     ServiceOrderStatus status,
-    String statusBeforeSuspension,
+    Long filmLabId,
     ServiceTier serviceTier,
     FilmHandoverMethod filmHandoverMethod,
-    OrderPaymentMethod paymentMethod,
+    PaymentMethod paymentMethod,
     String specialRequest,
     String customerAddressLine,
     String customerDistrict,
@@ -29,23 +29,8 @@ public record ServiceOrderResponse(
     Instant pickupWindowStartAt,
     Instant pickupWindowEndAt,
     Long estimatedTotalVnd,
-    Long finalTotalVnd,
-    Instant priceLockedAt,
     Instant expectedReturnAt,
-    Instant promisedReturnAt,
-    Instant machineAssignmentConfirmedAt,
     Instant labResponseDueAt,
-    Instant acceptedAt,
-    String rejectionReason,
-    Instant deliveredAt,
-    Instant closedAt,
-    boolean keepNegativesAtLab,
-    Instant cancelledAt,
-    Long cancelledByAccountId,
-    String cancellationReason,
-    Long cancellationFeeVnd,
-    int version,
-    Instant createdAt,
-    Instant updatedAt
-) {}
-
+    List<FilmRollResponse> rolls,
+    Object payment,
+    Instant createdAt) {}

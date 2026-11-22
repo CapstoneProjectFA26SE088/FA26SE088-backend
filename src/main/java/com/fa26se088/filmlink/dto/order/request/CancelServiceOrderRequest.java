@@ -4,11 +4,11 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
 /**
- * Request payload hủy đơn hàng của khách hàng (UC60, BR-38).
+ * UC60: body của {@code POST /api/v1/orders/{id}/cancel}.
+ *
+ * @param reason lý do huỷ, 10–500 ký tự (lưu vào {@code service_orders.cancellation_reason})
  */
 public record CancelServiceOrderRequest(
-    @NotBlank(message = "Lý do hủy đơn không được để trống")
-    @Size(max = 500, message = "Lý do hủy tối đa 500 ký tự")
-    String reason
-) {}
-
+    @NotBlank(message = "Cần nhập lý do huỷ đơn.")
+        @Size(min = 10, max = 500, message = "Lý do huỷ đơn từ 10 đến 500 ký tự.")
+        String reason) {}
