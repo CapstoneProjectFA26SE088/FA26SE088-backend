@@ -42,7 +42,9 @@ public class SecurityConfig {
     "/api/v1/auth/forgot-password",
     "/api/v1/auth/verify-password-reset-otp",
     "/api/v1/auth/reset-password",
-    "/api/v1/public/lab-applications"
+    "/api/v1/public/lab-applications",
+    // UC30: VNPay gọi IPN server-to-server (không có token)
+    "/api/v1/payments/vnpay/ipn"
   };
 
   /**
@@ -57,7 +59,10 @@ public class SecurityConfig {
     "/api/v1/film-stocks",
     "/api/v1/public/lab-applications/**",
     "/api/v1/public/film-labs",
-    "/api/v1/public/film-labs/*"
+    "/api/v1/public/film-labs/*",
+    // UC30: VNPay gọi IPN bằng GET; trình duyệt quay về return URL sau khi thanh toán
+    "/api/v1/payments/vnpay/ipn",
+    "/api/v1/payments/vnpay/return"
   };
 
   private static final String[] SWAGGER_PATHS = {

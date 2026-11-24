@@ -129,6 +129,23 @@ public enum ErrorCode {
 
   // --- payment ---
   PAYMENT_GATEWAY_NOT_CONFIGURED(HttpStatus.SERVICE_UNAVAILABLE, null),
+  PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  PAYMENT_INVALID_STATE(HttpStatus.CONFLICT, null),
+  PAYMENT_ACCESS_DENIED(HttpStatus.FORBIDDEN, null),
+
+  // --- delivery / geocoding (client/maps, client/delivery) ---
+  /** DEL-GEO-01: API key Google Maps chưa được cấu hình. */
+  GEOCODING_SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, null),
+  /** DEL-GEO-01: Không tìm thấy kết quả tọa độ hoặc địa chỉ tương ứng. */
+  GEOCODING_NO_RESULT(HttpStatus.NOT_FOUND, null),
+  /** DEL-GEO-01: Lỗi khi kết nối hoặc gọi API bên ngoài (Google Maps Geocoding). */
+  GEOCODING_API_ERROR(HttpStatus.BAD_GATEWAY, null),
+  /** Chưa bật Delivery Partner nào (ví dụ {@code GHN_ENABLED=false} trên CI / máy dev). */
+  DELIVERY_PROVIDER_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, null),
+
+  // --- notification / email (client/notification) ---
+  /** UH-37: Lỗi gửi email qua SMTP hoặc dịch vụ mail không khả dụng. */
+  EMAIL_SEND_FAILED(HttpStatus.SERVICE_UNAVAILABLE, null),
 
   // --- storage (client/storage) ---
   STORAGE_FILE_TYPE_NOT_ALLOWED(HttpStatus.BAD_REQUEST, null),

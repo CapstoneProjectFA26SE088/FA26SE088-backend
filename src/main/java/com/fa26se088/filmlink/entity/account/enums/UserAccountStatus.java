@@ -6,6 +6,7 @@ package com.fa26se088.filmlink.entity.account.enums;
  * <ul>
  *   <li>{@code PENDING_VERIFICATION}: vừa đăng ký, chưa nhập OTP email (UC06).
  *   <li>{@code ACTIVE}: được đăng nhập.
+ *   <li>{@code INACTIVE}: vô hiệu hoá / xoá mềm theo yêu cầu Admin (ACC-09).
  *   <li>{@code LOCKED}: Admin khoá, kèm {@code lock_reason} (UC11).
  *   <li>{@code DELETED}: đã xoá theo yêu cầu, dữ liệu cá nhân được ẩn danh (NFR-PRI-05).
  * </ul>
@@ -15,6 +16,7 @@ package com.fa26se088.filmlink.entity.account.enums;
 public enum UserAccountStatus {
   PENDING_VERIFICATION,
   ACTIVE,
+  INACTIVE,
   LOCKED,
   DELETED
 }

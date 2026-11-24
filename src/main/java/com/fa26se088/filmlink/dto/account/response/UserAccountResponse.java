@@ -10,7 +10,21 @@ public record UserAccountResponse(
     String email,
     String fullName,
     String phoneNumber,
+    String avatarBlobKey,
     UserAccountRole role,
     UserAccountStatus status,
     Instant emailVerifiedAt,
-    Instant createdAt) {}
+    Instant createdAt) {
+
+  public UserAccountResponse(
+      Long id,
+      String email,
+      String fullName,
+      String phoneNumber,
+      UserAccountRole role,
+      UserAccountStatus status,
+      Instant emailVerifiedAt,
+      Instant createdAt) {
+    this(id, email, fullName, phoneNumber, null, role, status, emailVerifiedAt, createdAt);
+  }
+}
