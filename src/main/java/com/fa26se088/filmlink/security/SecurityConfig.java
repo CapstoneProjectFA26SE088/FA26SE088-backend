@@ -25,7 +25,7 @@ import org.springframework.web.servlet.HandlerExceptionResolver;
  * Cấu hình Spring Security: stateless, xác thực bằng access token JWT.
  *
  * <p>Mặc định mọi request phải đăng nhập. Chỉ các endpoint trong {@link #PUBLIC_POST_PATHS}, {@link
- * #PUBLIC_GET_PATHS}, Swagger và {@code /error} được mở. Phân quyền nghiệp vụ theo ma trận SRS 3.1.3 kiểm ở tầng service hoặc
+ * #PUBLIC_GET_PATHS}, {@link #HEALTH_PATHS}, Swagger và {@code /error} được mở. Phân quyền nghiệp vụ theo ma trận SRS 3.1.3 kiểm ở tầng service hoặc
  * bằng {@code @PreAuthorize} (CR-14).
  */
 @Configuration
@@ -65,6 +65,9 @@ public class SecurityConfig {
     "/api/v1/payments/vnpay/return"
   };
 
+  /** Health check của Azure App Service; endpoint actuator khác không mở. */
+  private static final String[] HEALTH_PATHS = {"/actuator/health", "/actuator/health/**"};
+
   private static final String[] SWAGGER_PATHS = {
     "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html"
   };
@@ -86,6 +89,8 @@ public class SecurityConfig {
                 auth.requestMatchers(HttpMethod.POST, PUBLIC_POST_PATHS)
                     .permitAll()
                     .requestMatchers(HttpMethod.GET, PUBLIC_GET_PATHS)
+                    .permitAll()
+                    .requestMatchers(HttpMethod.GET, HEALTH_PATHS)
                     .permitAll()
                     .requestMatchers(SWAGGER_PATHS)
                     .permitAll()

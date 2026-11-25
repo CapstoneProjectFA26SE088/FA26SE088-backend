@@ -212,6 +212,16 @@ class LocalStorageClientTest {
                     .hasMessageContaining("STORAGE_LOCAL_ROOT"));
   }
 
+  /** {@code STORAGE_SIGNING_SECRET} trống: provider local vẫn phải dừng app với thông báo rõ. */
+  @Test
+  void blankSigningSecretStopsStartupWithClearMessage() {
+    StorageProperties properties = properties(tempDir.resolve("root"), "");
+
+    assertThatThrownBy(() -> new LocalStorageClient(properties, clock))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("STORAGE_SIGNING_SECRET");
+  }
+
   @Test
   void shortSigningSecretStopsStartup() {
     StorageProperties properties =
