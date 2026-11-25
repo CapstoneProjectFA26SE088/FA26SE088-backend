@@ -49,6 +49,8 @@ mvnw.cmd clean verify        # build + test (cần DB filmlink_test đang chạy
 
 - Swagger UI: <http://localhost:8386/swagger-ui.html>
 - OpenAPI JSON: <http://localhost:8386/v3/api-docs>
+- Health check (public): <http://localhost:8386/actuator/health>, <http://localhost:8386/actuator/health/liveness>
+- Trên Azure App Service đặt Health check path = `/actuator/health/liveness`.
 - Mọi API nằm dưới `/api/v1`. Chưa đăng nhập thì trả `401` dạng `ProblemDetail`.
 - Lỗi luôn là `ProblemDetail` có `errorCode` (mã kỹ thuật) và `messageCode` (mã MSG của SRS, có thể `null`).
 
