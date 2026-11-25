@@ -20,6 +20,6 @@ class StoragePropertiesTest {
   }
 
   private static StorageProperties properties(Duration ttl) {
-    return new StorageProperties("local", ttl, null);
+    return new StorageProperties("local", ttl, null, null);
   }
 }

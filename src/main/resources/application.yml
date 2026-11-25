@@ -53,6 +53,10 @@ filmlink:
       # Khoá HMAC-SHA256 Base64 >= 256 bit, riêng với JWT_SECRET. Chỉ bắt buộc khi provider = local
       # (LocalStorageClient kiểm: trống thì app không khởi động).
       signing-secret: ${STORAGE_SIGNING_SECRET:}
+    azure:
+      # Bí mật. Chỉ bắt buộc khi provider = azure (AzureBlobStorageClient kiểm: trống thì app không khởi động).
+      connection-string: ${AZURE_STORAGE_CONNECTION_STRING:}
+      container: ${AZURE_STORAGE_CONTAINER:filmlink}
   # LLM (client/llm, UC19). Key trống thì client "không khả dụng", chatbot trả câu dự phòng: build/test không cần key.
   # Model embedding không ở đây: đọc tham số hệ thống EMBEDDING_MODEL.
   ai:

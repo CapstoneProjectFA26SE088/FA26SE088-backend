@@ -15,16 +15,7 @@ import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
-import java.util.Arrays;
 import java.util.Base64;
-import java.util.Locale;
-import java.util.UUID;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
@@ -49,17 +40,6 @@ public class LocalStorageClient implements StorageClient {
 
   private static final String HMAC_SHA256 = "HmacSHA256";
   private static final int MIN_SECRET_BYTES = 32;
-  private static final DateTimeFormatter KEY_MONTH =
-      DateTimeFormatter.ofPattern("yyyy/MM").withZone(ZoneOffset.UTC);
-
-  /** {@code <purpose>/<yyyy>/<MM>/<uuid>.<ext>}: chặn mọi key không do server sinh. */
-  private static final Pattern BLOB_KEY_PATTERN =
-      Pattern.compile(
-          "("
-              + alternatives(Arrays.stream(StoragePurpose.values()).map(StoragePurpose::keyPrefix))
-              + ")/\\d{4}/\\d{2}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.("
-              + alternatives(Arrays.stream(StorageFileType.values()).map(StorageFileType::extension))
-              + ")");
 
   private final Path rootDir;
   private final String publicBaseUrl;
@@ -73,13 +53,17 @@ public class LocalStorageClient implements StorageClient {
             ? new StorageProperties.Local(null, null, null)
             : properties.local();
     this.rootDir =
-        createRootDir(requireSetting(local.rootDir(), "root-dir", "STORAGE_LOCAL_ROOT"));
+        createRootDir(
+            StorageProperties.requireSetting(
+                local.rootDir(), "local", "root-dir", "STORAGE_LOCAL_ROOT"));
     this.publicBaseUrl =
         stripTrailingSlash(
-            requireSetting(local.publicBaseUrl(), "public-base-url", "STORAGE_PUBLIC_BASE_URL"));
+            StorageProperties.requireSetting(
+                local.publicBaseUrl(), "local", "public-base-url", "STORAGE_PUBLIC_BASE_URL"));
     this.signingKey =
         decodeSecret(
-            requireSetting(local.signingSecret(), "signing-secret", "STORAGE_SIGNING_SECRET"));
+            StorageProperties.requireSetting(
+                local.signingSecret(), "local", "signing-secret", "STORAGE_SIGNING_SECRET"));
     this.signedUrlTtl = properties.signedUrlTtl();
     this.clock = clock;
     log.info("Storage provider=local, root-dir={}", rootDir);
@@ -88,28 +72,18 @@ public class LocalStorageClient implements StorageClient {
   @Override
   public String upload(
       StoragePurpose purpose, String originalFilename, InputStream content, long size) {
-    if (size > purpose.maxSizeBytes()) {
-      throw tooLarge(purpose);
-    }
+    StorageFileValidator.checkSize(purpose, size);
     try {
       BufferedInputStream input = new BufferedInputStream(content);
-      input.mark(StorageFileType.HEADER_LENGTH);
-      byte[] header = input.readNBytes(StorageFileType.HEADER_LENGTH);
-      input.reset();
-      StorageFileType type =
-          StorageFileType.detect(header)
-              .filter(purpose.allowedTypes()::contains)
-              .orElseThrow(() -> typeNotAllowed(purpose));
+      StorageFileType type = StorageFileValidator.detectAllowedType(purpose, input);
 
-      String blobKey = newBlobKey(purpose, type);
+      String blobKey = StorageBlobKey.generate(purpose, type, clock.instant());
       Path target = resolve(blobKey);
       Files.createDirectories(target.getParent());
       Path temp = Files.createTempFile(target.getParent(), ".upload-", ".tmp");
       try {
         long written = copyWithLimit(input, temp, purpose.maxSizeBytes());
-        if (written > purpose.maxSizeBytes()) {
-          throw tooLarge(purpose);
-        }
+        StorageFileValidator.checkSize(purpose, written);
         Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE);
       } finally {
         Files.deleteIfExists(temp);
@@ -179,36 +153,21 @@ public class LocalStorageClient implements StorageClient {
   /** File đã kiểm link, kèm số giây link còn hiệu lực (dùng cho {@code Cache-Control}). */
   record LocalStoredFile(Path path, StorageFileType type, long secondsLeft) {}
 
-  private String newBlobKey(StoragePurpose purpose, StorageFileType type) {
-    Instant now = clock.instant();
-    return purpose.keyPrefix()
-        + "/"
-        + KEY_MONTH.format(now)
-        + "/"
-        + UUID.randomUUID()
-        + "."
-        + type.extension();
-  }
-
   /**
    * Đường dẫn của blobKey trong root-dir; {@code null} nếu key sai mẫu hoặc thoát ra ngoài root-dir
    * (path traversal).
    */
   private Path resolve(String blobKey) {
-    if (blobKey == null || !BLOB_KEY_PATTERN.matcher(blobKey).matches()) {
+    if (!StorageBlobKey.isValid(blobKey)) {
       return null;
     }
     Path path = rootDir.resolve(blobKey).normalize();
     return path.startsWith(rootDir) ? path : null;
   }
 
-  /** blobKey lấy từ DB mà sai mẫu là lỗi lập trình, không phải lỗi người dùng. */
   private Path resolveOrThrow(String blobKey) {
-    Path path = resolve(blobKey);
-    if (path == null) {
-      throw new IllegalArgumentException("blobKey không đúng mẫu <purpose>/<yyyy>/<MM>/<uuid>.<ext>");
-    }
-    return path;
+    StorageBlobKey.requireValid(blobKey);
+    return resolve(blobKey);
   }
 
   /** Chép tối đa {@code limit + 1} byte: vượt {@code limit} nghĩa là file quá lớn. */
@@ -237,22 +196,6 @@ public class LocalStorageClient implements StorageClient {
     }
   }
 
-  /**
-   * Biến môi trường không có (placeholder {@code ${...}} không giải được) hoặc rỗng thì dừng app với
-   * thông báo rõ.
-   */
-  private static String requireSetting(String value, String property, String envName) {
-    if (value == null || value.isBlank() || value.contains("${")) {
-      throw new IllegalStateException(
-          "Thiếu filmlink.storage.local."
-              + property
-              + " (biến "
-              + envName
-              + "): bắt buộc khi filmlink.storage.provider=local");
-    }
-    return value.trim();
-  }
-
   private static Path createRootDir(String rootDir) {
     Path path = Path.of(rootDir).toAbsolutePath().normalize();
     try {
@@ -279,26 +222,6 @@ public class LocalStorageClient implements StorageClient {
 
   private static String stripTrailingSlash(String url) {
     return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
-  }
-
-  private static String alternatives(Stream<String> values) {
-    return values.map(Pattern::quote).collect(Collectors.joining("|"));
-  }
-
-  private static BusinessException typeNotAllowed(StoragePurpose purpose) {
-    String allowed =
-        purpose.allowedTypes().stream()
-            .map(type -> type.extension().toUpperCase(Locale.ROOT))
-            .sorted()
-            .collect(Collectors.joining(", "));
-    return new BusinessException(
-        ErrorCode.STORAGE_FILE_TYPE_NOT_ALLOWED, "Loại file không được hỗ trợ. Chỉ nhận: " + allowed);
-  }
-
-  private static BusinessException tooLarge(StoragePurpose purpose) {
-    return new BusinessException(
-        ErrorCode.STORAGE_FILE_TOO_LARGE,
-        "File vượt quá dung lượng cho phép (" + purpose.maxSizeBytes() / (1024 * 1024) + " MB).");
   }
 
   private BusinessException linkInvalid() {
