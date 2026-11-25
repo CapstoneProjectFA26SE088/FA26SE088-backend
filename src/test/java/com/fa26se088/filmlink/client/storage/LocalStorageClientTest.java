@@ -251,7 +251,8 @@ class LocalStorageClientTest {
     return new StorageProperties(
         "local",
         TTL,
-        new StorageProperties.Local(root.toString(), "http://localhost:8080/", secret));
+        new StorageProperties.Local(root.toString(), "http://localhost:8080/", secret),
+        null);
   }
 
   private String upload(StoragePurpose purpose, String filename, byte[] content) {

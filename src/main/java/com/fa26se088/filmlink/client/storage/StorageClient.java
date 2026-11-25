@@ -9,7 +9,7 @@ import java.net.URI;
  *
  * <ul>
  *   <li>{@code local}: {@link LocalStorageClient}, lưu trong thư mục trên máy dev.
- *   <li>Azure Blob Storage: chưa có, thêm một class mới khi triển khai.
+ *   <li>{@code azure}: {@link AzureBlobStorageClient}, lưu trong Azure Blob Storage.
  * </ul>
  *
  * <p>DB chỉ lưu blobKey (cột {@code blob_key}, {@code avatar_blob_key}), không bao giờ lưu đường dẫn
