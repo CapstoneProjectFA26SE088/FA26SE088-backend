@@ -26,10 +26,13 @@ import com.fa26se088.filmlink.service.payment.CommissionService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,12 +41,14 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/** Thực thi tính toán và ghi nhận hoa hồng nền tảng khi đơn hàng hoàn tất (UC32, BR-10, BR-11). */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class CommissionServiceImpl implements CommissionService {
 
   private static final String PAYMENT_METHOD_ONLINE = "ONLINE";
+  private static final long DEFAULT_RESCAN_WINDOW_DAYS = 7;
   private static final BigDecimal DEFAULT_COMMISSION_RATE = new BigDecimal("10.00"); // 10% mặc định theo BR-10
 
   private final CommissionRepository commissionRepository;
@@ -58,9 +63,14 @@ public class CommissionServiceImpl implements CommissionService {
    * BR-10/BR-11: ghi hoa hồng khi đơn CLOSED, gọi từ {@code order} trong cùng transaction (SPEC-00
    * §4.6). Idempotent theo đơn: đơn đã có commission ORDER thì không tạo thêm.
    *
-   * <p>ONLINE: tiền qua nền tảng, khấu trừ tại nguồn ({@code DEDUCTED}, {@code SETTLED} — DB
-   * {@code ck_commissions_billing} bắt buộc DEDUCTED đi với SETTLED). PAY_AT_LAB / COD: ghi nợ cho lab
-   * ({@code DEBT}, {@code OPEN}) chờ job chốt kỳ gom vào Commission Debt.
+   * <p>Ghi chú căn chỉnh kiến trúc DB ({@code V20261021_2048}, constraint {@code
+   * ck_commissions_billing}): với đơn {@code ONLINE}, cơ sở dữ liệu quy định {@code
+   * collection_mode = 'DEDUCTED'} luôn đi kèm {@code status = 'SETTLED'}. Do đó bản ghi hoa hồng
+   * ONLINE được lưu {@code DEDUCTED + SETTLED} với {@code eligible_at = closedAt +
+   * RESCAN_WINDOW_DAYS} (mặc định 7 ngày, BR-46), và trạng thái chờ giải ngân cho Lab được đối soát
+   * thông qua sự hiện diện của {@code service_order_id} trong bảng {@code payout_items} ({@code
+   * uq_payout_items_order}). Với đơn {@code PAY_AT_LAB} / {@code COD}, bản ghi lưu {@code DEBT +
+   * OPEN} chờ job chốt kỳ hằng tháng gom vào {@code commission_debts}.
    */
   @Override
   @Transactional
@@ -76,7 +86,7 @@ public class CommissionServiceImpl implements CommissionService {
 
     // BR-10: ưu tiên tỷ lệ gói dịch vụ > lab > tham số mặc định hệ thống (10%)
     BigDecimal rate = resolveCommissionRate(command.filmLabId(), command.servicePackageIds());
-    long commissionAmount =
+    final long commissionAmount =
         BigDecimal.valueOf(baseAmount)
             .multiply(rate)
             .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP)
@@ -101,7 +111,11 @@ public class CommissionServiceImpl implements CommissionService {
     commission.setAmountVnd(commissionAmount);
     commission.setCollectionMode(mode);
     commission.setStatus(status);
-    commission.setEligibleAt(command.closedAt() != null ? command.closedAt() : clock.instant());
+    Instant closedAt = command.closedAt() != null ? command.closedAt() : clock.instant();
+    commission.setEligibleAt(
+        mode == CommissionCollectionMode.DEDUCTED
+            ? closedAt.plus(Duration.ofDays(rescanWindowDays()))
+            : closedAt);
 
     Commission saved = commissionRepository.save(commission);
 
@@ -141,6 +155,11 @@ public class CommissionServiceImpl implements CommissionService {
     return commissionRepository.findByFilmLabId(labId, pageable).map(commissionMapper::toResponse);
   }
 
+  private long rescanWindowDays() {
+    Integer days = systemParameterService.getInteger(SystemParameterKey.RESCAN_WINDOW_DAYS);
+    return days != null ? days : DEFAULT_RESCAN_WINDOW_DAYS;
+  }
+
   /**
    * BR-10: xác định tỷ lệ hoa hồng hiệu lực theo thứ tự ưu tiên:
    * 1. Quy tắc theo Service Package (nếu đơn có gói được cấu hình riêng)
@@ -157,11 +176,16 @@ public class CommissionServiceImpl implements CommissionService {
                       CommissionRateRule::getServicePackageId,
                       CommissionRateRule::getRatePercent,
                       (first, second) -> first));
-      for (Long packageId : servicePackageIds) {
-        BigDecimal packageRate = packageRates.get(packageId);
-        if (packageRate != null) {
-          return packageRate;
-        }
+      // Các gói trong đơn có rule khác nhau thì không chọn gói nào: dùng rule lab / mặc định.
+      Set<BigDecimal> distinctRates =
+          servicePackageIds.stream()
+              .map(packageRates::get)
+              .filter(Objects::nonNull)
+              .map(rate -> rate.stripTrailingZeros())
+              .collect(Collectors.toSet());
+      if (distinctRates.size() == 1) {
+        return packageRates.get(
+            servicePackageIds.stream().filter(packageRates::containsKey).findFirst().orElseThrow());
       }
     }
 

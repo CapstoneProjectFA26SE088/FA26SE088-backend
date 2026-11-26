@@ -77,6 +77,9 @@ filmlink:
     # UC32 / PAY-05: chốt kỳ nợ hoa hồng tháng trước vào 00:15 ngày 1 hàng tháng (giờ VN).
     commission-debt-generation:
       cron: "0 15 0 1 * *"
+    # UC35 / BR-46: 01:30 mỗi ngày gom hoa hồng ONLINE đã qua thời gian re-scan thành payout.
+    payout-generation:
+      cron: "0 30 1 * * *"
 
 spring:
   config:

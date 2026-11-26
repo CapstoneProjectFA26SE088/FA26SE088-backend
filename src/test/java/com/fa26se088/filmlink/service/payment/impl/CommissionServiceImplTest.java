@@ -24,6 +24,7 @@ import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,6 +82,7 @@ class CommissionServiceImplTest {
         .thenReturn(false);
     when(systemParameterService.getDecimal(SystemParameterKey.DEFAULT_COMMISSION_RATE))
         .thenReturn(new BigDecimal("10.00"));
+    when(systemParameterService.getInteger(SystemParameterKey.RESCAN_WINDOW_DAYS)).thenReturn(7);
     when(commissionRepository.save(any(Commission.class)))
         .thenAnswer(
             i -> {
@@ -100,7 +102,7 @@ class CommissionServiceImplTest {
     assertEquals(20_000L, saved.getAmountVnd());
     assertEquals(CommissionCollectionMode.DEDUCTED, saved.getCollectionMode());
     assertEquals(CommissionStatus.SETTLED, saved.getStatus());
-    assertEquals(CLOSED_AT, saved.getEligibleAt());
+    assertEquals(CLOSED_AT.plus(7, ChronoUnit.DAYS), saved.getEligibleAt());
   }
 
   @Test
@@ -209,6 +211,34 @@ class CommissionServiceImplTest {
     assertEquals(0, new BigDecimal("8.00").compareTo(saved.getRatePercent()));
     assertEquals(16_000L, saved.getAmountVnd());
     verify(systemParameterService, never()).getDecimal(any());
+  }
+
+  @Test
+  @DisplayName("P-04: các gói trong đơn có rule khác nhau -> dùng rule của Film Lab")
+  void recordForClosedOrder_conflictingPackageRules_fallsBackToLabRule() {
+    CommissionRateRule rule7 = new CommissionRateRule();
+    rule7.setServicePackageId(7L);
+    rule7.setRatePercent(new BigDecimal("6.00"));
+    CommissionRateRule rule8 = new CommissionRateRule();
+    rule8.setServicePackageId(8L);
+    rule8.setRatePercent(new BigDecimal("9.00"));
+    CommissionRateRule labRule = new CommissionRateRule();
+    labRule.setFilmLabId(1L);
+    labRule.setRatePercent(new BigDecimal("12.00"));
+
+    when(commissionRepository.existsByServiceOrderIdAndKind(108L, CommissionKind.ORDER))
+        .thenReturn(false);
+    when(commissionRateRuleRepository.findByServicePackageIdIn(List.of(7L, 8L)))
+        .thenReturn(List.of(rule7, rule8));
+    when(commissionRateRuleRepository.findByFilmLabId(1L)).thenReturn(Optional.of(labRule));
+    when(commissionRepository.save(any(Commission.class))).thenAnswer(i -> i.getArgument(0));
+
+    commissionService.recordForClosedOrder(
+        new ClosedOrderCommission(108L, 1L, List.of(7L, 8L), "PAY_AT_LAB", 100_000L, CLOSED_AT));
+
+    Commission saved = captureSaved();
+    assertEquals(0, new BigDecimal("12.00").compareTo(saved.getRatePercent()));
+    assertEquals(12_000L, saved.getAmountVnd());
   }
 
   @Test

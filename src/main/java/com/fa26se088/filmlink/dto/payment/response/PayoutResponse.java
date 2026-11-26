@@ -3,10 +3,9 @@ package com.fa26se088.filmlink.dto.payment.response;
 import com.fa26se088.filmlink.entity.payment.enums.PayoutRecipientType;
 import com.fa26se088.filmlink.entity.payment.enums.PayoutStatus;
 import java.time.Instant;
+import java.util.List;
 
-/**
- * Response DTO cho Payout.
- */
+/** Response DTO cho Payout kèm link tải biên lai có chữ ký và danh sách dòng chi trả. */
 public record PayoutResponse(
     Long id,
     String payoutCode,
@@ -19,11 +18,11 @@ public record PayoutResponse(
     String bankAccountNumber,
     String accountHolderName,
     String receiptBlobKey,
+    String receiptUrl,
     Long executedByAccountId,
     Instant paidAt,
     String failureReason,
     int version,
     Instant createdAt,
-    Instant updatedAt
-) {}
-
+    Instant updatedAt,
+    List<PayoutItemResponse> items) {}

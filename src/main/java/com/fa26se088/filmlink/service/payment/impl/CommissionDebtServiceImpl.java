@@ -11,6 +11,7 @@ import com.fa26se088.filmlink.entity.masterdata.enums.SystemParameterKey;
 import com.fa26se088.filmlink.entity.payment.Commission;
 import com.fa26se088.filmlink.entity.payment.CommissionDebt;
 import com.fa26se088.filmlink.entity.payment.Payment;
+import com.fa26se088.filmlink.entity.payment.enums.CommissionCollectionMode;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionDebtStatus;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionStatus;
 import com.fa26se088.filmlink.entity.payment.enums.PaymentConfirmationStatus;
@@ -44,6 +45,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/** Thực thi chốt kỳ công nợ hoa hồng hằng tháng và đối soát nộp nợ của Film Lab (UC32, UC33). */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -79,8 +81,12 @@ public class CommissionDebtServiceImpl implements CommissionDebtService {
     Instant threshold = nextMonthFirstDay.atStartOfDay(ZoneId.of("Asia/Ho_Chi_Minh")).toInstant();
 
     // Gom các dòng hoa hồng DEBT chưa chốt kỳ (OPEN, DEFERRED) tính đến hết tháng
-    List<Commission> unbilledCommissions = commissionRepository.findByFilmLabIdAndStatusInAndEligibleAtBefore(
-        labId, List.of(CommissionStatus.OPEN, CommissionStatus.DEFERRED), threshold);
+    List<Commission> unbilledCommissions =
+        commissionRepository.findByFilmLabIdAndCollectionModeAndStatusInAndEligibleAtBefore(
+            labId,
+            CommissionCollectionMode.DEBT,
+            List.of(CommissionStatus.OPEN, CommissionStatus.DEFERRED),
+            threshold);
 
     long totalDebtVnd = unbilledCommissions.stream()
         .mapToLong(Commission::getAmountVnd)
@@ -140,7 +146,9 @@ public class CommissionDebtServiceImpl implements CommissionDebtService {
     Instant threshold =
         firstDay.plusMonths(1).atStartOfDay(ZoneId.of("Asia/Ho_Chi_Minh")).toInstant();
     return commissionRepository.findDistinctLabIdsWithUnbilledCommissions(
-        List.of(CommissionStatus.OPEN, CommissionStatus.DEFERRED), threshold);
+        CommissionCollectionMode.DEBT,
+        List.of(CommissionStatus.OPEN, CommissionStatus.DEFERRED),
+        threshold);
   }
 
   @Override
