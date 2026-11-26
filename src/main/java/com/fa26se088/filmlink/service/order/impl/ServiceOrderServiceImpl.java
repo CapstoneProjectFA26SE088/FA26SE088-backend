@@ -16,8 +16,6 @@ import com.fa26se088.filmlink.dto.order.request.CancelServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchServiceOrderRequest;
-import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
-import com.fa26se088.filmlink.dto.order.response.ServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmRollDamagePhotoResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmRollQuoteResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderCreationResult;
@@ -59,6 +57,7 @@ import com.fa26se088.filmlink.service.masterdata.SystemParameterService;
 import com.fa26se088.filmlink.service.notification.event.NotificationEvent;
 import com.fa26se088.filmlink.service.order.DigitalFilmArchiveService;
 import com.fa26se088.filmlink.service.order.ServiceOrderService;
+import com.fa26se088.filmlink.service.payment.CommissionService;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -74,8 +73,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-
-import com.fa26se088.filmlink.service.payment.CommissionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -645,8 +642,6 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
           "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
     }
 
-    // TODO(P-04): CommissionService.recordForClosedOrder(...) trong cùng transaction (SPEC-00 §4.6)
-    // khi contract lên dev
     // BR-10, BR-26 / SPEC-00 §4.6: ghi nhận hoa hồng khi đơn CLOSED trong cùng transaction; chỉ lấy
     // gói của các cuộn RECEIVED (cuộn DAMAGED / NOT_RECEIVED hoa hồng = 0).
     List<Long> servicePackageIds =
