@@ -6,6 +6,7 @@ import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordFilmReturnRequest;
+import com.fa26se088.filmlink.dto.order.request.RecordFilmRollDamageRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.RejectServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
@@ -104,6 +105,24 @@ public interface LabServiceOrderService {
    */
   LabServiceOrderResponse recordStage(
       Long ownerAccountId, Long orderId, RecordProcessingStageRequest request);
+
+  /**
+   * UC24, BR-26: lab ghi nhận một cuộn phim {@code RECEIVED} của đơn {@code IN_PROCESSING} bị hỏng
+   * (cháy sáng, loá toàn bộ, không lên hình) kèm 1–10 ảnh bằng chứng → cuộn chuyển {@code DAMAGED},
+   * miễn phí cuộn hỏng, tính lại {@code final_total_vnd}, hoàn tiền chênh lệch nếu khách đã thanh
+   * toán online dư, và báo Photographer.
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404),
+   *     {@code ORDER_STATUS_CONFLICT} (409: đơn không IN_PROCESSING hoặc cuộn đã DAMAGED), {@code
+   *     ORDER_ROLL_NOT_FOUND} (404), {@code VALIDATION_ERROR} (400: số ảnh ngoài 1–10 hoặc ghi chú
+   *     rỗng), lỗi {@code STORAGE_*} khi ảnh sai loại / quá dung lượng
+   */
+  LabServiceOrderResponse recordRollDamage(
+      Long ownerAccountId,
+      Long orderId,
+      Long rollId,
+      RecordFilmRollDamageRequest request,
+      List<MultipartFile> photos);
 
   /**
    * UC26, BR-08: lab thêm ảnh xem trước (1–40 JPG mỗi lần) cho một cuộn {@code RECEIVED} của đơn
