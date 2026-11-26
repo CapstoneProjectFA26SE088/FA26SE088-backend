@@ -92,6 +92,7 @@ public class ServiceOrderMapper {
         order.getDeliveredAt(),
         order.getClosedAt(),
         order.getCancelledAt(),
+        order.getRejectionReason(),
         order.getCancellationReason(),
         order.isKeepNegativesAtLab(),
         photographer,
