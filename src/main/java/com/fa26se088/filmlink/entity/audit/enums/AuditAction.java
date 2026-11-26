@@ -121,6 +121,18 @@ public enum AuditAction {
    */
   ORDER_CANCELLED,
 
+  /**
+   * UC24, BR-07: Admin lùi công đoạn xử lý của đơn (insert dòng mới {@code is_admin_reversion =
+   * true}); before/after ghi {@code stage}, after thêm {@code adminReversion} và {@code note}.
+   */
+  ORDER_STAGE_REVERTED,
+
+  /**
+   * UC24, BR-26: Film Lab Owner ghi nhận cuộn phim hỏng kèm ảnh bằng chứng, miễn phí cuộn hỏng và
+   * tính lại {@code finalTotalVnd}.
+   */
+  ORDER_ROLL_DAMAGED,
+
   // --- payment ---
   PAYMENT_CREATED,
   PAYMENT_SUCCEEDED,

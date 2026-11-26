@@ -6,6 +6,7 @@ import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordFilmReturnRequest;
+import com.fa26se088.filmlink.dto.order.request.RecordFilmRollDamageRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
@@ -144,6 +145,31 @@ public class LabServiceOrderController {
       @PathVariable Long id,
       @Valid @RequestBody RecordProcessingStageRequest request) {
     return labServiceOrderService.recordStage(account.id(), id, request);
+  }
+
+  @PostMapping(
+      path = "/{id}/rolls/{rollId}/damage",
+      consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+  @Operation(
+      summary = "Ghi nhận cuộn phim hỏng kèm ảnh bằng chứng, miễn phí cuộn và tính lại giá (BR-26)",
+      description =
+          "UC24, BR-26. Part `data` (JSON, Content-Type application/json): damageNote bắt buộc,"
+              + " ≤ 500 ký tự. Part `photos`: 1–10 ảnh JPG/PNG ≤ 10 MB. Cuộn RECEIVED → DAMAGED,"
+              + " miễn phí cuộn hỏng, tính lại finalTotalVnd (và tự động hoàn tiền phần chênh lệch"
+              + " nếu khách đã thanh toán online dư). Đơn không IN_PROCESSING hoặc cuộn đã DAMAGED"
+              + " → 409 ORDER_STATUS_CONFLICT; cuộn không thuộc đơn → 404 ORDER_ROLL_NOT_FOUND.")
+  @io.swagger.v3.oas.annotations.parameters.RequestBody(
+      content =
+          @Content(
+              mediaType = MediaType.MULTIPART_FORM_DATA_VALUE,
+              encoding = @Encoding(name = "data", contentType = MediaType.APPLICATION_JSON_VALUE)))
+  public LabServiceOrderResponse recordRollDamage(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @PathVariable Long rollId,
+      @Valid @RequestPart("data") RecordFilmRollDamageRequest data,
+      @RequestPart(value = "photos", required = false) List<MultipartFile> photos) {
+    return labServiceOrderService.recordRollDamage(account.id(), id, rollId, data, photos);
   }
 
   @PostMapping(path = "/{id}/rolls/{rollId}/scans", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
