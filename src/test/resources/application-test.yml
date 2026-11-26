@@ -1,0 +1,21 @@
+# Test dùng cùng database và tài khoản với app (đọc từ .env / biến môi trường), chỉ khác schema.
+filmlink:
+  db:
+    schema: ${DB_TEST_SCHEMA:filmlink_test}
+  # File test ghi vào thư mục tạm, không đụng STORAGE_LOCAL_ROOT của máy dev.
+  storage:
+    provider: local
+    local:
+      root-dir: ${java.io.tmpdir}/filmlink-test-storage
+      public-base-url: http://localhost:8080
+  # Job @Scheduled không chạy giữa test.
+  scheduling:
+    enabled: false
+
+# Mỗi Spring test context giữ một connection pool riêng; pool mặc định 10 làm PostgreSQL hết kết
+# nối ("too many clients already") khi số context tăng.
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 1

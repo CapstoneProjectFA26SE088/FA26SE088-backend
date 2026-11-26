@@ -1,0 +1,163 @@
+server:
+  port: ${SERVER_PORT:8080}
+  # Chạy sau reverse proxy (Azure App Service): đọc X-Forwarded-Proto / X-Forwarded-For để scheme và IP client đúng.
+  forward-headers-strategy: framework
+
+# Actuator: chỉ mở /actuator/health (kèm /liveness, /readiness), không lộ chi tiết.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  health:
+    # SMTP chậm / lỗi không được làm health DOWN (App Service sẽ restart app); lỗi gửi mail do SmtpEmailClient xử lý.
+    mail:
+      enabled: false
+
+# Schema PostgreSQL của môi trường hiện tại: khai báo DUY NHẤT ở đây (test ghi đè trong application-test.yml).
+filmlink:
+  db:
+    schema: ${DB_SCHEMA:public}
+  jwt:
+    # Khoá HS256 dạng Base64, tối thiểu 256 bit. KHÔNG có giá trị mặc định: thiếu thì app không khởi động.
+    secret: ${JWT_SECRET}
+    access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:PT15M}
+    refresh-token-ttl: ${JWT_REFRESH_TOKEN_TTL:P7D}
+  mail:
+    # provider: log = chỉ ghi email (kể cả OTP) ra log; smtp = gửi thật qua SMTP server.
+    provider: ${MAIL_PROVIDER:log}
+    from: ${MAIL_FROM:noreply@filmlink.vn}
+    from-name: ${MAIL_FROM_NAME:FilmLink}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
+  # SPIKE VNPay sandbox. Bí mật để trống thì endpoint trả 503, app vẫn khởi động.
+  vnpay:
+    tmn-code: ${VNPAY_TMN_CODE:}
+    hash-secret: ${VNPAY_HASH_SECRET:}
+    pay-url: ${VNPAY_PAY_URL:https://sandbox.vnpayment.vn/paymentv2/vpcpay.html}
+    return-url: ${VNPAY_RETURN_URL:}
+  # Lưu trữ file (client/storage). DB chỉ lưu blobKey, link tải là link ký có hạn.
+  storage:
+    provider: ${STORAGE_PROVIDER:local}
+    # NFR-PRI-02: tối đa 15 phút, quá thì app không khởi động.
+    signed-url-ttl: ${STORAGE_SIGNED_URL_TTL:PT15M}
+    local:
+      # Bắt buộc khi provider = local. Đường dẫn Windows viết bằng "/" (.env đọc như .properties).
+      root-dir: ${STORAGE_LOCAL_ROOT:D:/capstone/FA26SE088-backend/uploads}
+      public-base-url: ${STORAGE_PUBLIC_BASE_URL:http://localhost:${server.port}}
+      # Khoá HMAC-SHA256 Base64 >= 256 bit, riêng với JWT_SECRET. Chỉ bắt buộc khi provider = local
+      # (LocalStorageClient kiểm: trống thì app không khởi động).
+      signing-secret: ${STORAGE_SIGNING_SECRET:}
+    azure:
+      # Bí mật. Chỉ bắt buộc khi provider = azure (AzureBlobStorageClient kiểm: trống thì app không khởi động).
+      connection-string: ${AZURE_STORAGE_CONNECTION_STRING:}
+      container: ${AZURE_STORAGE_CONTAINER:filmlink}
+  # LLM (client/llm, UC19). Key trống thì client "không khả dụng", chatbot trả câu dự phòng: build/test không cần key.
+  # Model embedding không ở đây: đọc tham số hệ thống EMBEDDING_MODEL.
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:}
+      chat-model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      timeout: 20s
+  # Bật @Scheduled (config/SchedulingConfig). Test đặt false.
+  scheduling:
+    enabled: true
+  # Cron của từng job: filmlink.jobs.<tên-job>.cron (job luôn ghi zone = "Asia/Ho_Chi_Minh").
+  jobs:
+    # UC06 / FND-03: xoá tài khoản PENDING_VERIFICATION chưa xác thực email sau 24 giờ.
+    # Chạy lúc 2:00 AM giờ VN mỗi ngày (giờ thấp điểm, tránh tranh chấp tải).
+    account-purge-unverified:
+      cron: "0 0 2 * * *"
+
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  application:
+    name: filmlink-backend
+  mail:
+    host: ${SMTP_HOST:smtp.gmail.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    default-encoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          auth: ${SMTP_AUTH:true}
+          starttls:
+            enable: ${SMTP_STARTTLS_ENABLE:true}
+          connectiontimeout: ${SMTP_CONNECTION_TIMEOUT:5000}
+          timeout: ${SMTP_TIMEOUT:5000}
+          writetimeout: ${SMTP_WRITE_TIMEOUT:5000}
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/filmlink}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD}
+    hikari:
+      # Hikari gọi Connection.setSchema() trên mọi connection => search_path = schema đích.
+      # Cần cho hàm trigger truy vấn bảng không ghi tên schema (trg_film_labs_owner_role).
+      schema: ${filmlink.db.schema}
+  data:
+    web:
+      pageable:
+        # CR-01: mặc định 20 bản ghi / trang; trang đánh số từ 0. Client xin quá 100 thì bị hạ về 100.
+        default-page-size: 20
+        max-page-size: 100
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        default_schema: ${filmlink.db.schema}
+  flyway:
+    enabled: true
+    # Flyway tự tạo schema nếu chưa có; flyway_schema_history nằm trong default-schema.
+    default-schema: ${filmlink.db.schema}
+    schemas: ${filmlink.db.schema}
+  servlet:
+    multipart:
+      # Trần chung của request; giới hạn theo loại file nằm ở StoragePurpose.
+      max-file-size: 10MB
+      max-request-size: 50MB
+  mvc:
+    problemdetails:
+      enabled: true
+
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:true}
+    path: /v3/api-docs
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:true}
+    path: /swagger-ui.html
+# Delivery Partner (UC21). GHN tắt mặc định để CI / máy dev khởi động không cần biến môi trường;
+# khi tắt và chưa có provider nào thì API giao nhận trả 503 DELIVERY_PROVIDER_UNAVAILABLE.
+delivery:
+  default-provider: ${DELIVERY_PROVIDER:ghn}
+
+  ghn:
+    enabled: ${GHN_ENABLED:false}
+    name: active
+    base-url: https://dev-online-gateway.ghn.vn
+    token: ${GHN_TOKEN:}
+    shop-id: ${GHN_SHOP_ID:}
+    webhook:
+      secret: ${GHN_WEBHOOK_SECRET:}
+
+# Google Maps Platform — Geocoding API (delivery domain, DEL-GEO-01)
+# API key lấy từ Google Cloud Console → API & Services → Credentials.
+# Không có giá trị mặc định; nếu thiếu, GeoApiContext không tạo được và app sẽ log WARNING thay vì crash.
+google:
+  maps:
+    api-key: ${GOOGLE_MAPS_API_KEY:}
+    # Thời gian chờ gọi Geocoding API (ms). Default 3000.
+    connect-timeout-ms: ${GOOGLE_MAPS_CONNECT_TIMEOUT_MS:3000}
+    # Số lần thử lại tự động nếu gặp lỗi OVER_QUERY_LIMIT hoặc network glitch.
+    max-retries: ${GOOGLE_MAPS_MAX_RETRIES:3}

@@ -1,0 +1,119 @@
+package com.fa26se088.filmlink.controller.account;
+
+import com.fa26se088.filmlink.dto.account.request.ForgotPasswordRequest;
+import com.fa26se088.filmlink.dto.account.request.LoginRequest;
+import com.fa26se088.filmlink.dto.account.request.LogoutRequest;
+import com.fa26se088.filmlink.dto.account.request.RefreshTokenRequest;
+import com.fa26se088.filmlink.dto.account.request.RegisterRequest;
+import com.fa26se088.filmlink.dto.account.request.ResendOtpRequest;
+import com.fa26se088.filmlink.dto.account.request.ResetPasswordRequest;
+import com.fa26se088.filmlink.dto.account.request.VerifyEmailRequest;
+import com.fa26se088.filmlink.dto.account.request.VerifyPasswordResetOtpRequest;
+import com.fa26se088.filmlink.dto.account.response.PasswordResetTokenResponse;
+import com.fa26se088.filmlink.dto.account.response.TokenResponse;
+import com.fa26se088.filmlink.dto.account.response.UserAccountResponse;
+import com.fa26se088.filmlink.security.AuthenticatedAccount;
+import com.fa26se088.filmlink.service.account.AuthenticationService;
+import com.fa26se088.filmlink.service.account.UserAccountService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+
+/** Đăng ký, xác thực email, đăng nhập, refresh, đăng xuất (UC01, UC06). */
+@RestController
+@RequestMapping("/api/v1/auth")
+@RequiredArgsConstructor
+@Tag(name = "Auth", description = "Đăng ký, đăng nhập và quản lý phiên (UC01, UC06)")
+public class AuthController {
+
+  private final UserAccountService userAccountService;
+  private final AuthenticationService authenticationService;
+
+  @PostMapping("/register")
+  @ResponseStatus(HttpStatus.CREATED)
+  @Operation(
+      summary = "Đăng ký tài khoản Photographer (UC06)",
+      description = "Tạo tài khoản chưa xác thực và gửi OTP qua email (MSG05).")
+  public UserAccountResponse register(@Valid @RequestBody RegisterRequest request) {
+    return userAccountService.register(request);
+  }
+
+  @PostMapping("/verify-email")
+  @Operation(
+      summary = "Xác thực email bằng OTP (UC06)",
+      description = "OTP đúng thì kích hoạt tài khoản và trả token. Sai hoặc hết hạn: MSG11.")
+  public TokenResponse verifyEmail(@Valid @RequestBody VerifyEmailRequest request) {
+    return userAccountService.verifyEmail(request);
+  }
+
+  @PostMapping("/resend-otp")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  @Operation(
+      summary = "Gửi lại mã OTP qua email (UC06, UH-36)",
+      description =
+          "Gửi lại sau ≥ 60 giây, tối đa 3 lần / 15 phút. Mã cũ bị vô hiệu hoá. Lỗi: MSG12.")
+  public void resendOtp(@Valid @RequestBody ResendOtpRequest request) {
+    userAccountService.resendOtp(request);
+  }
+
+  @PostMapping("/forgot-password")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  @Operation(
+      summary = "Yêu cầu mã OTP đặt lại mật khẩu (SCR-03, UC02)",
+      description =
+          "Gửi mã OTP 6 số qua email. Dù email có tồn tại hay không đều trả 204 để chống dò email.")
+  public void forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+    userAccountService.forgotPassword(request);
+  }
+
+  @PostMapping("/verify-password-reset-otp")
+  @Operation(
+      summary = "Xác thực OTP đặt lại mật khẩu (SCR-03, UC02)",
+      description =
+          "Xác thực mã OTP 6 số và trả về reset token ngắn hạn (15 phút). Sai hoặc hết hạn: MSG11.")
+  public PasswordResetTokenResponse verifyPasswordResetOtp(
+      @Valid @RequestBody VerifyPasswordResetOtpRequest request) {
+    return userAccountService.verifyPasswordResetOtp(request);
+  }
+
+  @PostMapping("/reset-password")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  @Operation(
+      summary = "Đặt mật khẩu mới (SCR-03, UC02)",
+      description =
+          "Đặt mật khẩu mới bằng reset token. Thu hồi mọi refresh token cũ và gửi email cảnh báo.")
+  public void resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+    userAccountService.resetPassword(request);
+  }
+
+  @PostMapping("/login")
+  @Operation(summary = "Đăng nhập (UC01)", description = "Sai email hoặc mật khẩu: MSG09.")
+  public TokenResponse login(@Valid @RequestBody LoginRequest request) {
+    return authenticationService.login(request);
+  }
+
+  @PostMapping("/refresh")
+  @Operation(
+      summary = "Đổi refresh token lấy cặp token mới",
+      description = "Refresh token cũ bị thu hồi sau khi dùng (NFR-SEC-01).")
+  public TokenResponse refresh(@Valid @RequestBody RefreshTokenRequest request) {
+    return authenticationService.refresh(request);
+  }
+
+  @PostMapping("/logout")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  @Operation(summary = "Đăng xuất (UC01)", description = "Thu hồi refresh token gửi lên.")
+  public void logout(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @Valid @RequestBody LogoutRequest request) {
+    authenticationService.logout(account.id(), request);
+  }
+}
