@@ -7,6 +7,7 @@ import com.fa26se088.filmlink.entity.account.enums.UserAccountRole;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
+import com.fa26se088.filmlink.entity.masterdata.enums.SystemParameterKey;
 import com.fa26se088.filmlink.entity.payment.Commission;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionCollectionMode;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionKind;
@@ -18,6 +19,7 @@ import com.fa26se088.filmlink.repository.payment.CommissionRepository;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
+import com.fa26se088.filmlink.service.masterdata.SystemParameterService;
 import com.fa26se088.filmlink.service.payment.CommissionService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -42,6 +44,7 @@ public class CommissionServiceImpl implements CommissionService {
   private final CommissionMapper commissionMapper;
   private final LabAccessService labAccessService;
   private final AuditLogService auditLogService;
+  private final SystemParameterService systemParameterService;
   private final Clock clock;
 
   /**
@@ -64,8 +67,12 @@ public class CommissionServiceImpl implements CommissionService {
 
     long baseAmount = Math.max(0, command.serviceValueVnd());
 
-    // Tỷ lệ mặc định 10% (BR-10); rule theo gói / theo lab làm ở P-04
-    BigDecimal rate = DEFAULT_COMMISSION_RATE;
+    // Đọc tỷ lệ hoa hồng mặc định từ tham số hệ thống (BR-10 / BR-38); rule theo gói / lab làm ở P-04
+    BigDecimal rate = systemParameterService.getDecimal(SystemParameterKey.DEFAULT_COMMISSION_RATE);
+    if (rate == null) {
+      log.warn("[CommissionService] Tham số DEFAULT_COMMISSION_RATE chưa được seed, dùng giá trị mặc định 10%");
+      rate = DEFAULT_COMMISSION_RATE;
+    }
     long commissionAmount =
         BigDecimal.valueOf(baseAmount)
             .multiply(rate)
