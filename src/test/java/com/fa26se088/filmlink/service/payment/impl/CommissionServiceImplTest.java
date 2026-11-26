@@ -10,10 +10,12 @@ import static org.mockito.Mockito.when;
 import com.fa26se088.filmlink.dto.payment.ClosedOrderCommission;
 import com.fa26se088.filmlink.entity.masterdata.enums.SystemParameterKey;
 import com.fa26se088.filmlink.entity.payment.Commission;
+import com.fa26se088.filmlink.entity.payment.CommissionRateRule;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionCollectionMode;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionKind;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionStatus;
 import com.fa26se088.filmlink.mapper.payment.CommissionMapper;
+import com.fa26se088.filmlink.repository.payment.CommissionRateRuleRepository;
 import com.fa26se088.filmlink.repository.payment.CommissionRepository;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
@@ -23,6 +25,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -38,6 +41,7 @@ class CommissionServiceImplTest {
   private static final Instant CLOSED_AT = Instant.parse("2026-11-10T08:00:00Z");
 
   @Mock private CommissionRepository commissionRepository;
+  @Mock private CommissionRateRuleRepository commissionRateRuleRepository;
   @Mock private LabAccessService labAccessService;
   @Mock private AuditLogService auditLogService;
   @Mock private SystemParameterService systemParameterService;
@@ -52,6 +56,7 @@ class CommissionServiceImplTest {
     commissionService =
         new CommissionServiceImpl(
             commissionRepository,
+            commissionRateRuleRepository,
             commissionMapper,
             labAccessService,
             auditLogService,
@@ -161,6 +166,49 @@ class CommissionServiceImplTest {
     commissionService.recordForClosedOrder(command(103L, "ONLINE", 100_000L));
 
     verify(commissionRepository, times(1)).save(any(Commission.class));
+  }
+
+  @Test
+  @DisplayName("BR-10: ưu tiên tỷ lệ Service Package > Film Lab > mặc định 10%")
+  void recordForClosedOrder_packageRuleOverridesLabAndDefault() {
+    CommissionRateRule packageRule = new CommissionRateRule();
+    packageRule.setServicePackageId(7L);
+    packageRule.setRatePercent(new BigDecimal("6.50"));
+
+    when(commissionRepository.existsByServiceOrderIdAndKind(106L, CommissionKind.ORDER))
+        .thenReturn(false);
+    when(commissionRateRuleRepository.findByServicePackageIdIn(List.of(7L)))
+        .thenReturn(List.of(packageRule));
+    when(commissionRepository.save(any(Commission.class))).thenAnswer(i -> i.getArgument(0));
+
+    commissionService.recordForClosedOrder(command(106L, "ONLINE", 200_000L));
+
+    Commission saved = captureSaved();
+    assertEquals(0, new BigDecimal("6.50").compareTo(saved.getRatePercent()));
+    assertEquals(13_000L, saved.getAmountVnd());
+    verify(commissionRateRuleRepository, never()).findByFilmLabId(any());
+  }
+
+  @Test
+  @DisplayName("BR-10: khi không có rule theo gói thì dùng rule theo Film Lab")
+  void recordForClosedOrder_labRuleOverridesDefault() {
+    CommissionRateRule labRule = new CommissionRateRule();
+    labRule.setFilmLabId(1L);
+    labRule.setRatePercent(new BigDecimal("8.00"));
+
+    when(commissionRepository.existsByServiceOrderIdAndKind(107L, CommissionKind.ORDER))
+        .thenReturn(false);
+    when(commissionRateRuleRepository.findByServicePackageIdIn(List.of(7L)))
+        .thenReturn(List.of());
+    when(commissionRateRuleRepository.findByFilmLabId(1L)).thenReturn(Optional.of(labRule));
+    when(commissionRepository.save(any(Commission.class))).thenAnswer(i -> i.getArgument(0));
+
+    commissionService.recordForClosedOrder(command(107L, "PAY_AT_LAB", 200_000L));
+
+    Commission saved = captureSaved();
+    assertEquals(0, new BigDecimal("8.00").compareTo(saved.getRatePercent()));
+    assertEquals(16_000L, saved.getAmountVnd());
+    verify(systemParameterService, never()).getDecimal(any());
   }
 
   @Test

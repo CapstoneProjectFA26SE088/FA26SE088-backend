@@ -15,6 +15,7 @@ import com.fa26se088.filmlink.dto.order.request.CancelServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchServiceOrderRequest;
+import com.fa26se088.filmlink.dto.payment.ClosedOrderCommission;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmRollQuoteResponse;
@@ -43,6 +44,7 @@ import com.fa26se088.filmlink.repository.order.ProcessingStageRecordRepository;
 import com.fa26se088.filmlink.repository.order.ServiceOrderRepository;
 import com.fa26se088.filmlink.service.archive.ArchiveService;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
+import com.fa26se088.filmlink.service.payment.CommissionService;
 import com.fa26se088.filmlink.service.delivery.FilmHandoverService;
 import com.fa26se088.filmlink.service.lab.FilmLabService;
 import com.fa26se088.filmlink.service.machine.ScheduleChangeService;
@@ -138,6 +140,7 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
   private final ProcessingStageRecordRepository processingStageRecordRepository;
   private final FilmHandoverService filmHandoverService;
   private final ArchiveService archiveService;
+  private final CommissionService commissionService;
   private final Clock clock;
 
   /**
@@ -633,8 +636,22 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
           "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
     }
 
-    // TODO(P-04): CommissionService.recordForClosedOrder(...) trong cùng transaction (SPEC-00 §4.6)
-    // khi contract lên dev
+    // BR-10 / SPEC-00 §4.6: ghi nhận hoa hồng khi đơn CLOSED trong cùng transaction.
+    List<Long> servicePackageIds =
+        filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId()).stream()
+            .map(FilmRoll::getServicePackageId)
+            .distinct()
+            .toList();
+    long serviceValueVnd =
+        order.getFinalTotalVnd() != null ? order.getFinalTotalVnd() : order.getEstimatedTotalVnd();
+    commissionService.recordForClosedOrder(
+        new ClosedOrderCommission(
+            order.getId(),
+            order.getFilmLabId(),
+            servicePackageIds,
+            order.getPaymentMethod().name(),
+            serviceValueVnd,
+            order.getClosedAt()));
 
     auditLogService.recordSuccess(
         new AuditEntry(

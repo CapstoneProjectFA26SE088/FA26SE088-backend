@@ -11,6 +11,7 @@ import com.fa26se088.filmlink.dto.payment.request.ReportDebtPaymentRequest;
 import com.fa26se088.filmlink.dto.payment.response.CommissionDebtResponse;
 import com.fa26se088.filmlink.entity.account.enums.UserAccountRole;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
+import com.fa26se088.filmlink.entity.masterdata.enums.SystemParameterKey;
 import com.fa26se088.filmlink.entity.payment.Commission;
 import com.fa26se088.filmlink.entity.payment.CommissionDebt;
 import com.fa26se088.filmlink.entity.payment.Payment;
@@ -23,6 +24,7 @@ import com.fa26se088.filmlink.repository.payment.PaymentRepository;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
+import com.fa26se088.filmlink.service.masterdata.SystemParameterService;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -45,6 +47,7 @@ class CommissionDebtServiceImplTest {
   @Mock private PaymentRepository paymentRepository;
   @Mock private LabAccessService labAccessService;
   @Mock private AuditLogService auditLogService;
+  @Mock private SystemParameterService systemParameterService;
 
   private final CommissionDebtMapper debtMapper = new CommissionDebtMapper();
   private final Clock clock = Clock.fixed(Instant.parse("2026-11-12T00:00:00Z"), ZoneOffset.UTC);
@@ -57,7 +60,14 @@ class CommissionDebtServiceImplTest {
   @BeforeEach
   void setUp() {
     debtService = new CommissionDebtServiceImpl(
-        debtRepository, commissionRepository, paymentRepository, debtMapper, labAccessService, auditLogService, clock);
+        debtRepository,
+        commissionRepository,
+        paymentRepository,
+        debtMapper,
+        labAccessService,
+        auditLogService,
+        systemParameterService,
+        clock);
 
     labOwnerAccount = new AuthenticatedAccount(20L, "labowner@test.com", UserAccountRole.FILM_LAB_OWNER);
     adminAccount = new AuthenticatedAccount(1L, "admin@test.com", UserAccountRole.ADMIN);
@@ -83,6 +93,8 @@ class CommissionDebtServiceImplTest {
 
     when(commissionRepository.findByFilmLabIdAndStatusInAndEligibleAtBefore(any(), any(), any()))
         .thenReturn(List.of(c1, c2));
+    when(systemParameterService.getInteger(SystemParameterKey.BILLING_DUE_DAY_OF_MONTH))
+        .thenReturn(15);
 
     when(debtRepository.save(any(CommissionDebt.class))).thenAnswer(i -> {
       CommissionDebt d = i.getArgument(0);
@@ -95,6 +107,7 @@ class CommissionDebtServiceImplTest {
     assertNotNull(response);
     assertEquals(100L, response.id());
     assertEquals(50000L, response.totalAmountVnd());
+    assertEquals(LocalDate.of(2026, 11, 15), response.dueDate());
     assertEquals(CommissionDebtStatus.UNPAID, response.status());
     verify(debtRepository).save(any(CommissionDebt.class));
     verify(commissionRepository).save(c1);
