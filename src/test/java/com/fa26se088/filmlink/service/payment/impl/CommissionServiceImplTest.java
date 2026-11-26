@@ -75,7 +75,7 @@ class CommissionServiceImplTest {
   }
 
   @Test
-  @DisplayName("BR-10: đơn ONLINE -> DEDUCTED + SETTLED, 10% giá trị dịch vụ, eligibleAt = closedAt")
+  @DisplayName("BR-10: đơn ONLINE -> DEDUCTED + SETTLED, đọc tỷ lệ từ SystemParameterService")
   void recordForClosedOrder_online_deductedAndSettled() {
     when(commissionRepository.existsByServiceOrderIdAndKind(100L, CommissionKind.ORDER))
         .thenReturn(false);
@@ -134,6 +134,22 @@ class CommissionServiceImplTest {
     Commission saved = captureSaved();
     assertEquals(15_000L, saved.getAmountVnd());
     assertEquals(CommissionCollectionMode.DEBT, saved.getCollectionMode());
+  }
+
+  @Test
+  @DisplayName("BR-38: đọc tỷ lệ hoa hồng động từ SystemParameterService (VD: 15%)")
+  void recordForClosedOrder_customRateFromSystemParameter_usesConfiguredRate() {
+    when(commissionRepository.existsByServiceOrderIdAndKind(105L, CommissionKind.ORDER))
+        .thenReturn(false);
+    when(systemParameterService.getDecimal(SystemParameterKey.DEFAULT_COMMISSION_RATE))
+        .thenReturn(new BigDecimal("15.00"));
+    when(commissionRepository.save(any(Commission.class))).thenAnswer(i -> i.getArgument(0));
+
+    commissionService.recordForClosedOrder(command(105L, "ONLINE", 200_000L));
+
+    Commission saved = captureSaved();
+    assertEquals(0, new BigDecimal("15.00").compareTo(saved.getRatePercent()));
+    assertEquals(30_000L, saved.getAmountVnd());
   }
 
   @Test
