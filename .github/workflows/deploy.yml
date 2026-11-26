@@ -1,0 +1,141 @@
+name: Deploy staging
+
+# Tự chạy sau khi CI xanh trên main (merge vào main). Chạy tay để rollback hoặc duyệt migration phá huỷ.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Commit SHA / tag / nhánh cần deploy (rollback: điền SHA cũ)'
+        required: true
+        default: main
+      confirm_destructive:
+        description: 'Gõ yes nếu migration mới có DROP/TRUNCATE/RENAME/ALTER TYPE và đã kiểm tra kỹ'
+        required: true
+        default: 'no'
+
+permissions:
+  contents: read
+  id-token: write   # cần cho OIDC (azure/login)
+
+# Không bao giờ chạy 2 lần deploy song song; không huỷ lần đang chạy giữa chừng.
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+env:
+  AZURE_RESOURCE_GROUP: rg-filmlink-staging
+  AZURE_WEBAPP_NAME: app-filmlink-stg1841
+  STAGING_URL: https://app-filmlink-stg1841-ekg0h2dbfghseec0.malaysiawest-01.azurewebsites.net
+  MIGRATION_DIR: src/main/resources/db/migration
+
+jobs:
+  deploy-staging:
+    name: deploy-staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # KHÔNG thêm `environment:` cho job này: subject OIDC sẽ đổi và Azure từ chối đăng nhập.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+
+    steps:
+      - name: Resolve commit to deploy
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          if [ "$EVENT" = "workflow_run" ]; then
+            echo "ref=$RUN_SHA" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=$INPUT_REF" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.target.outputs.ref }}
+          fetch-depth: 2
+
+      # Chặn migration nguy hiểm trước khi chạm vào DB staging.
+      - name: Guard migrations
+        env:
+          CONFIRM: ${{ inputs.confirm_destructive }}
+        run: |
+          if ! git rev-parse --verify -q HEAD^1 >/dev/null; then
+            echo "Không có commit cha để so sánh, bỏ qua guard."; exit 0
+          fi
+          changed=$(git diff --name-only --diff-filter=MDR HEAD^1 HEAD -- "$MIGRATION_DIR")
+          if [ -n "$changed" ]; then
+            echo "::error::Migration đã áp dụng bị sửa/xoá/đổi tên (Flyway sẽ báo checksum mismatch). Tạo migration mới thay vì sửa file cũ:"
+            echo "$changed"; exit 1
+          fi
+          added=$(git diff --name-only --diff-filter=A HEAD^1 HEAD -- "$MIGRATION_DIR")
+          if [ -z "$added" ]; then echo "Không có migration mới."; exit 0; fi
+          echo "Migration mới:"; echo "$added"
+          risky=$(echo "$added" | xargs grep -l -i -E '\b(DROP|TRUNCATE|RENAME)\b|ALTER[[:space:]]+COLUMN[[:space:]]+[^[:space:]]+[[:space:]]+(SET[[:space:]]+DATA[[:space:]]+)?TYPE' || true)
+          if [ -n "$risky" ] && [ "$CONFIRM" != "yes" ]; then
+            echo "::error::Migration có thao tác có thể mất dữ liệu: $risky"
+            echo "Kiểm tra kỹ, rồi chạy lại bằng Actions > Deploy staging > Run workflow với confirm_destructive=yes."
+            exit 1
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # Test đã chạy ở CI cho đúng commit này, nên ở đây chỉ đóng gói.
+      - name: Build JAR
+        run: |
+          chmod +x mvnw
+          ./mvnw -B -ntp -DskipTests -Dcheckstyle.skip package
+          JAR=$(ls target/*.jar | grep -v -E -- '-plain\.jar$' | head -1)
+          if [ -z "$JAR" ]; then echo "::error::Không tìm thấy JAR trong target/"; exit 1; fi
+          echo "JAR=$JAR" >> "$GITHUB_ENV"
+          echo "Built $JAR"
+
+      # Mốc thời gian để point-in-time restore DB nếu migration làm hỏng dữ liệu.
+      - name: Record restore point
+        run: |
+          {
+            echo "### Deploy staging"
+            echo "- Commit: \`$(git rev-parse HEAD)\`"
+            echo "- Restore point (UTC, trước khi deploy): \`$(date -u +%Y-%m-%dT%H:%M:%SZ)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy JAR to App Service
+        run: |
+          az webapp deploy \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_NAME" \
+            --src-path "$JAR" \
+            --type jar \
+            --restart true
+
+      # Flyway chạy lúc app khởi động; UP nghĩa là migration xong và app nhận request được.
+      - name: Health check
+        run: |
+          sleep 45
+          for i in $(seq 1 26); do
+            body=$(curl -s --max-time 10 "$STAGING_URL/actuator/health" || true)
+            if echo "$body" | grep -q '"status":"UP"'; then
+              echo "Healthy sau $i lần thử"; exit 0
+            fi
+            echo "Lần $i: chưa UP ($body)"; sleep 10
+          done
+          echo "::error::App không UP sau ~5 phút. Xem App Service > Log stream."
+          exit 1
