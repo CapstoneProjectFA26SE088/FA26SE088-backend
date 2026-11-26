@@ -7,6 +7,7 @@ import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordFilmReturnRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
+import com.fa26se088.filmlink.dto.order.request.RejectServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
@@ -81,6 +82,20 @@ public class LabServiceOrderController {
   public LabServiceOrderResponse accept(
       @AuthenticationPrincipal AuthenticatedAccount account, @PathVariable Long id) {
     return labServiceOrderService.accept(account.id(), id);
+  }
+
+  @PostMapping("/{id}/reject")
+  @Operation(
+      summary = "Từ chối đơn: AWAITING_LAB_CONFIRMATION → CANCELLED",
+      description =
+          "UC22, BR-39. Bắt buộc có lý do 10–500 ký tự. Hoàn 100% tiền tự động. Nếu phim đã gửi"
+              + " đi mà lab từ chối (UH-09) thì tạo chiều trả phim phí lab chịu. Sai trạng thái →"
+              + " 409 ORDER_STATUS_CONFLICT; lý do không hợp lệ → 400 VALIDATION_ERROR.")
+  public LabServiceOrderResponse reject(
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      @PathVariable Long id,
+      @Valid @RequestBody RejectServiceOrderRequest request) {
+    return labServiceOrderService.reject(account.id(), id, request);
   }
 
   @PostMapping(path = "/{id}/receipt", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

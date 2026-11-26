@@ -19,13 +19,19 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fa26se088.filmlink.client.storage.StorageClient;
+import com.fa26se088.filmlink.dto.delivery.response.FilmHandoverResponse;
 import com.fa26se088.filmlink.entity.account.UserAccount;
 import com.fa26se088.filmlink.entity.account.enums.UserAccountRole;
+import com.fa26se088.filmlink.entity.delivery.enums.HandoverPoint;
 import com.fa26se088.filmlink.entity.notification.enums.NotificationType;
 import com.fa26se088.filmlink.repository.account.UserAccountRepository;
 import com.fa26se088.filmlink.security.JwtTokenProvider;
+import com.fa26se088.filmlink.service.delivery.FilmHandoverService;
 import com.fa26se088.filmlink.service.lab.impl.FilmLabFixture;
 import com.fa26se088.filmlink.service.notification.NotificationService;
+import com.fa26se088.filmlink.service.order.event.OrderAcceptedEvent;
+import com.fa26se088.filmlink.service.order.event.OrderRejectedEvent;
+import com.fa26se088.filmlink.service.payment.PaymentService;
 import com.jayway.jsonpath.JsonPath;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
@@ -53,6 +59,8 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.event.ApplicationEvents;
+import org.springframework.test.context.event.RecordApplicationEvents;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -68,6 +76,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@RecordApplicationEvents
 class LabServiceOrderControllerIntegrationTest {
 
   private static final String ORDERS_PATH = "/api/v1/orders";
@@ -80,8 +89,11 @@ class LabServiceOrderControllerIntegrationTest {
   @Autowired private ApplicationEventPublisher eventPublisher;
   @Autowired private TransactionTemplate transactionTemplate;
   @Autowired private StorageClient storageClient;
+  @Autowired private ApplicationEvents applicationEvents;
 
   @MockitoBean private NotificationService notificationService;
+  @MockitoBean private PaymentService paymentService;
+  @MockitoBean private FilmHandoverService filmHandoverService;
 
   private FilmLabFixture fixture;
   private final List<Long> labIds = new ArrayList<>();
@@ -277,6 +289,205 @@ class LabServiceOrderControllerIntegrationTest {
         .isZero();
   }
 
+  // --- Rule từ chối đơn (ORD-02 / UC22) ---
+
+  /**
+   * TC-F09-02 (UC22, BR-39): Chủ lab từ chối đơn đang ở trạng thái AWAITING_LAB_CONFIRMATION.
+   * Kết quả: status -> CANCELLED, lưu rejection_reason, gọi PaymentService.createOrderRefund nếu netPaid > 0,
+   * phát OrderRejectedEvent, ghi audit log ORDER_CANCELLED, báo Notification cho photographer.
+   */
+  @Test
+  @DisplayName("TC-F09-02 Lab owner rejects order in AWAITING_LAB_CONFIRMATION; order cancelled, refund triggered, audited, photographer notified")
+  void tcF0902_rejectOrder_succeeds() throws Exception {
+    long orderId = createOrder(labId, packageId, "PAY_AT_LAB", "SELF_DROP_OFF", 2);
+    String orderCode = orderCode(orderId);
+    clearInvocations(notificationService);
+    org.mockito.Mockito.when(paymentService.netPaidForOrder(orderId)).thenReturn(120_000L);
+
+    String body = """
+        {"reason":"Lab đang quá tải máy C-41, không nhận thêm đơn trong tuần này."}
+        """;
+
+    reject(owner, orderId, body)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.id").value(orderId))
+        .andExpect(jsonPath("$.status").value("CANCELLED"))
+        .andExpect(jsonPath("$.rejectionReason").value("Lab đang quá tải máy C-41, không nhận thêm đơn trong tuần này."))
+        .andExpect(jsonPath("$.cancellationReason").value("Lab đang quá tải máy C-41, không nhận thêm đơn trong tuần này."));
+
+    Map<String, Object> row =
+        jdbcTemplate.queryForMap(
+            "SELECT status, rejection_reason, cancellation_reason, cancelled_at, cancelled_by_account_id, cancellation_fee_vnd FROM service_orders WHERE id = ?",
+            orderId);
+    assertThat(row.get("status")).isEqualTo("CANCELLED");
+    assertThat(row.get("rejection_reason")).isEqualTo("Lab đang quá tải máy C-41, không nhận thêm đơn trong tuần này.");
+    assertThat(row.get("cancellation_reason")).isEqualTo("Lab đang quá tải máy C-41, không nhận thêm đơn trong tuần này.");
+    assertThat(row.get("cancelled_at")).isNotNull();
+    assertThat(((Number) row.get("cancelled_by_account_id")).longValue()).isEqualTo(owner.getId());
+    assertThat(((Number) row.get("cancellation_fee_vnd")).longValue()).isEqualTo(0L);
+
+    // Verify refund called with 100% netPaid (BR-39)
+    verify(paymentService).createOrderRefund(eq(orderId), eq(120_000L), contains("Lab đang quá tải"));
+
+    // Verify audit log
+    Map<String, Object> audit =
+        jdbcTemplate.queryForMap(
+            "SELECT before_data ->> 'status' AS before_status, after_data ->> 'status' AS after_status,"
+                + " after_data ->> 'rejectionReason' AS after_reason,"
+                + " after_data ->> 'filmAlreadyShipped' AS after_shipped"
+                + " FROM audit_logs WHERE action = 'ORDER_CANCELLED' AND target_type = 'SERVICE_ORDER'"
+                + " AND target_id = ? AND actor_account_id = ?",
+            orderId,
+            owner.getId());
+    assertThat(audit.get("before_status")).isEqualTo("AWAITING_LAB_CONFIRMATION");
+    assertThat(audit.get("after_status")).isEqualTo("CANCELLED");
+    assertThat(audit.get("after_reason")).isEqualTo("Lab đang quá tải máy C-41, không nhận thêm đơn trong tuần này.");
+    assertThat(audit.get("after_shipped")).isEqualTo("false");
+
+    // Verify notification sent to photographer
+    ArgumentCaptor<String> notifBody = ArgumentCaptor.forClass(String.class);
+    verify(notificationService)
+        .notify(
+            eq(photographer.getId()),
+            eq(NotificationType.ORDER_STATUS),
+            contains(orderCode),
+            notifBody.capture(),
+            any());
+    assertThat(notifBody.getValue())
+        .contains("đã từ chối")
+        .contains("Lab đang quá tải máy C-41");
+
+    // Verify OrderRejectedEvent published
+    assertThat(
+        applicationEvents.stream(OrderRejectedEvent.class)
+            .filter(e -> e.serviceOrderId().equals(orderId))
+            .findFirst())
+        .isPresent();
+  }
+
+  /**
+   * TC-F09-03: Từ chối đơn không có lý do hoặc lý do < 10 ký tự -> 400 VALIDATION_ERROR.
+   */
+  @Test
+  @DisplayName("TC-F09-03 Reject order with missing or too short reason -> 400 VALIDATION_ERROR")
+  void tcF0903_rejectInvalidReason_returns400() throws Exception {
+    long orderId = createOrder(labId, packageId, "PAY_AT_LAB", "SELF_DROP_OFF", 1);
+
+    // Empty reason
+    reject(owner, orderId, "{\"reason\":\"\"}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
+    // Too short reason (< 10 chars)
+    reject(owner, orderId, "{\"reason\":\"Ngắn quá\"}")
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
+    assertThat(statusOf(orderId)).isEqualTo("AWAITING_LAB_CONFIRMATION");
+  }
+
+  /**
+   * TC-F09-04: Từ chối đơn ở trạng thái không cho phép -> 409 ORDER_STATUS_CONFLICT.
+   */
+  @Test
+  @DisplayName("TC-F09-04 Reject order in invalid status -> 409 ORDER_STATUS_CONFLICT")
+  void tcF0904_rejectInvalidStatus_returns409() throws Exception {
+    long orderId = createOrder(labId, packageId, "ONLINE", "SELF_DROP_OFF", 1);
+    assertThat(statusOf(orderId)).isEqualTo("AWAITING_PAYMENT");
+
+    reject(owner, orderId, "{\"reason\":\"Lab không nhận đơn này vì quá bận.\"}")
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.errorCode").value("ORDER_STATUS_CONFLICT"))
+        .andExpect(jsonPath("$.detail", containsString("AWAITING_PAYMENT")));
+
+    assertThat(statusOf(orderId)).isEqualTo("AWAITING_PAYMENT");
+  }
+
+  /**
+   * TC-F09-05: Lab này từ chối đơn của lab khác -> 404 ORDER_NOT_FOUND.
+   */
+  @Test
+  @DisplayName("TC-F09-05 Reject order of another lab -> 404 ORDER_NOT_FOUND")
+  void tcF0905_rejectOrderOfOtherLab_returns404() throws Exception {
+    UserAccount otherOwner = fixture.createAccount(UserAccountRole.FILM_LAB_OWNER);
+    long otherLabId = createReadyLab(otherOwner, "Lab Khác");
+    long otherOrderId =
+        createOrder(otherLabId, readyPackage(otherLabId), "PAY_AT_LAB", "SELF_DROP_OFF", 1);
+
+    reject(owner, otherOrderId, "{\"reason\":\"Không phải đơn của lab tôi nhưng vẫn bấm từ chối.\"}")
+        .andExpect(status().isNotFound())
+        .andExpect(jsonPath("$.errorCode").value("ORDER_NOT_FOUND"));
+
+    assertThat(statusOf(otherOrderId)).isEqualTo("AWAITING_LAB_CONFIRMATION");
+  }
+
+  /**
+   * TC-F09-06 (UH-09): Phim ĐÃ gửi đi mà lab từ chối (đơn đang ở AWAITING_FILM, có handover COLLECTED_FROM_PHOTOGRAPHER).
+   * Kết quả: Đơn CANCELLED, audit ghi returnFeePayer = FILM_LAB, filmAlreadyShipped = true, thông báo có nhắc chiều trả phim.
+   */
+  @Test
+  @DisplayName("TC-F09-06 UH-09 Lab rejects order when film already shipped; returnFeePayer is FILM_LAB")
+  void tcF0906_rejectWhenFilmAlreadyShipped_feePayerIsLab() throws Exception {
+    long orderId = createOrder(labId, packageId, "PAY_AT_LAB", "PICKUP", 1);
+    accept(owner, orderId).andExpect(status().isOk());
+    clearInvocations(notificationService);
+
+    org.mockito.Mockito.when(filmHandoverService.getByServiceOrderId(orderId))
+        .thenReturn(
+            List.of(
+                new FilmHandoverResponse(
+                    99L,
+                    HandoverPoint.COLLECTED_FROM_PHOTOGRAPHER,
+                    (short) 1,
+                    "Shipper đã lấy phim",
+                    photographer.getId(),
+                    photographer.getFullName(),
+                    java.time.Instant.now(),
+                    List.of())));
+
+    String reason = "Máy tráng hỏng đột xuất không khắc phục được, phải từ chối đơn.";
+    reject(owner, orderId, "{\"reason\":\"" + reason + "\"}")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.status").value("CANCELLED"));
+
+    // Verify audit log has returnFeePayer = FILM_LAB
+    Map<String, Object> audit =
+        jdbcTemplate.queryForMap(
+            "SELECT after_data ->> 'returnFeePayer' AS return_fee_payer,"
+                + " after_data ->> 'filmAlreadyShipped' AS film_already_shipped"
+                + " FROM audit_logs WHERE action = 'ORDER_CANCELLED' AND target_type = 'SERVICE_ORDER'"
+                + " AND target_id = ? AND actor_account_id = ?",
+            orderId,
+            owner.getId());
+    assertThat(audit.get("return_fee_payer")).isEqualTo("FILM_LAB");
+    assertThat(audit.get("film_already_shipped")).isEqualTo("true");
+
+    // Notification mentions return shipping fee borne by lab
+    ArgumentCaptor<String> notifBody = ArgumentCaptor.forClass(String.class);
+    verify(notificationService)
+        .notify(eq(photographer.getId()), eq(NotificationType.ORDER_STATUS), any(), notifBody.capture(), any());
+    assertThat(notifBody.getValue())
+        .contains("chi phí vận chuyển do lab chịu");
+  }
+
+  /**
+   * TC-F09-07: Lab nhận đơn PICKUP -> chuyển AWAITING_FILM và publish OrderAcceptedEvent cho delivery DLV-01.
+   */
+  @Test
+  @DisplayName("TC-F09-07 Lab accepts PICKUP order -> publishes OrderAcceptedEvent for delivery")
+  void tcF0907_acceptPickup_publishesOrderAcceptedEvent() throws Exception {
+    long orderId = createOrder(labId, packageId, "PAY_AT_LAB", "PICKUP", 1);
+    String orderCode = orderCode(orderId);
+
+    accept(owner, orderId).andExpect(status().isOk());
+
+    assertThat(
+        applicationEvents.stream(OrderAcceptedEvent.class)
+            .filter(e -> e.serviceOrderId().equals(orderId) && e.orderCode().equals(orderCode))
+            .findFirst())
+        .isPresent();
+  }
+
   // --- Xem đơn ---
 
   @Test
@@ -431,6 +642,14 @@ class LabServiceOrderControllerIntegrationTest {
     return mockMvc.perform(
         post(LAB_ORDERS_PATH + "/" + orderId + "/accept")
             .header(HttpHeaders.AUTHORIZATION, bearer(account)));
+  }
+
+  private ResultActions reject(UserAccount account, long orderId, String body) throws Exception {
+    return mockMvc.perform(
+        post(LAB_ORDERS_PATH + "/" + orderId + "/reject")
+            .header(HttpHeaders.AUTHORIZATION, bearer(account))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body));
   }
 
   private String statusOf(long orderId) {

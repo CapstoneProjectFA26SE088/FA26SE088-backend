@@ -118,6 +118,7 @@ spring:
         default_schema: ${filmlink.db.schema}
   flyway:
     enabled: true
+    out-of-order: true
     # Flyway tự tạo schema nếu chưa có; flyway_schema_history nằm trong default-schema.
     default-schema: ${filmlink.db.schema}
     schemas: ${filmlink.db.schema}
