@@ -36,6 +36,9 @@ public enum StoragePurpose {
       "payout-receipt",
       10 * StoragePurpose.MB,
       Set.of(StorageFileType.PDF, StorageFileType.JPEG, StorageFileType.PNG));
+  /** Ảnh bằng chứng cuộn phim hỏng (UC24, BR-26): JPG/PNG, tối đa 10 MB mỗi file. */
+  DAMAGE_PHOTO(
+      "damage-photo", 10 * StoragePurpose.MB, Set.of(StorageFileType.JPEG, StorageFileType.PNG));
 
   private static final long MB = 1024L * 1024L;
 

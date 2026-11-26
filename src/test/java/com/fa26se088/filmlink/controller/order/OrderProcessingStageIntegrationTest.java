@@ -116,6 +116,16 @@ class OrderProcessingStageIntegrationTest {
   void cleanUp() {
     for (Long id : labIds) {
       String orderIds = "SELECT id FROM service_orders WHERE film_lab_id = " + id;
+      String rollIds = "SELECT id FROM film_rolls WHERE service_order_id IN (" + orderIds + ")";
+      jdbcTemplate
+          .queryForList(
+              "SELECT blob_key FROM film_roll_damage_photos WHERE film_roll_id IN ("
+                  + rollIds
+                  + ")",
+              String.class)
+          .forEach(storageClient::delete);
+      jdbcTemplate.update(
+          "DELETE FROM film_roll_damage_photos WHERE film_roll_id IN (" + rollIds + ")");
       jdbcTemplate
           .queryForList(
               "SELECT p.blob_key FROM film_handover_photos p"
@@ -153,6 +163,8 @@ class OrderProcessingStageIntegrationTest {
                 "ALTER TABLE processing_stage_records"
                     + " ENABLE TRIGGER processing_stage_records_append_only");
           });
+      jdbcTemplate.update(
+          "DELETE FROM payments WHERE service_order_id IN (" + orderIds + ")");
       jdbcTemplate.update("DELETE FROM film_rolls WHERE service_order_id IN (" + orderIds + ")");
       jdbcTemplate.update("DELETE FROM service_orders WHERE film_lab_id = ?", id);
     }
@@ -242,6 +254,198 @@ class OrderProcessingStageIntegrationTest {
     recordStage(owner, orderId, "QC", null)
         .andExpect(status().isUnprocessableContent())
         .andExpect(jsonPath("$.errorCode").value("ORDER_STAGE_OUT_OF_ORDER"));
+  }
+
+  /**
+   * TC-F13-02 (UC24, BR-07): Film Lab Owner nhảy bước (RECEIVED → WASHING) hoặc tự lùi bước
+   * (WASHING → DEVELOPING) đều bị chặn 422 {@code ORDER_STAGE_OUT_OF_ORDER}.
+   */
+  @Test
+  @DisplayName("TC-F13-02 UC24 lab skipping or reverting stage -> 422 ORDER_STAGE_OUT_OF_ORDER")
+  void tcF1302_labSkipOrRevertStage_returns422() throws Exception {
+    long orderId = createOrderInProcessing(photographer, 1);
+    clearInvocations(notificationService);
+
+    recordStage(owner, orderId, "WASHING", null)
+        .andExpect(status().isUnprocessableContent())
+        .andExpect(jsonPath("$.errorCode").value("ORDER_STAGE_OUT_OF_ORDER"))
+        .andExpect(jsonPath("$.currentStage").value("RECEIVED"))
+        .andExpect(jsonPath("$.expectedStage").value("DEVELOPING"));
+
+    recordStage(owner, orderId, "DEVELOPING", null).andExpect(status().isOk());
+    recordStage(owner, orderId, "WASHING", null).andExpect(status().isOk());
+
+    recordStage(owner, orderId, "DEVELOPING", null)
+        .andExpect(status().isUnprocessableContent())
+        .andExpect(jsonPath("$.errorCode").value("ORDER_STAGE_OUT_OF_ORDER"))
+        .andExpect(jsonPath("$.currentStage").value("WASHING"))
+        .andExpect(jsonPath("$.expectedStage").value("DRYING"));
+
+    assertThat(stageCount(orderId)).isEqualTo(3);
+  }
+
+  /**
+   * TC-F13-03 (UC24, BR-07): chỉ Admin được lùi công đoạn xử lý; insert dòng mới với {@code
+   * is_admin_reversion = true}, ghi audit {@code ORDER_STAGE_REVERTED}, báo Photographer & chủ lab;
+   * sau đó lab tiếp tục đi tới từ công đoạn vừa lùi.
+   */
+  @Test
+  @DisplayName("TC-F13-03 UC24 Admin reverts stage -> is_admin_reversion=true, audit, lab resumes")
+  void tcF1303_adminRevertStage_andLabResumes() throws Exception {
+    long orderId = createOrderInProcessing(photographer, 1);
+    UserAccount admin = fixture.createAccount(UserAccountRole.ADMIN);
+    recordStage(owner, orderId, "DEVELOPING", null).andExpect(status().isOk());
+    recordStage(owner, orderId, "WASHING", null).andExpect(status().isOk());
+    recordStage(owner, orderId, "DRYING", null).andExpect(status().isOk());
+    clearInvocations(notificationService);
+
+    // Lab và Photographer gọi API Admin bị chặn 403.
+    mockMvc
+        .perform(
+            post("/api/v1/admin/orders/" + orderId + "/stages/revert")
+                .header(HttpHeaders.AUTHORIZATION, bearer(owner))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"stage\":\"DEVELOPING\",\"note\":\"Lab tự lùi\"}"))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.errorCode").value("ACCESS_DENIED"));
+
+    // Admin lùi từ DRYING về DEVELOPING.
+    mockMvc
+        .perform(
+            post("/api/v1/admin/orders/" + orderId + "/stages/revert")
+                .header(HttpHeaders.AUTHORIZATION, bearer(admin))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"stage\":\"DEVELOPING\",\"note\":\"Sai thao tác bước rửa\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.previousStage").value("DRYING"))
+        .andExpect(jsonPath("$.currentStage").value("DEVELOPING"))
+        .andExpect(jsonPath("$.stages", hasSize(5)))
+        .andExpect(jsonPath("$.stages[4].stage").value("DEVELOPING"))
+        .andExpect(jsonPath("$.stages[4].adminReversion").value(true))
+        .andExpect(jsonPath("$.stages[4].note").value("Sai thao tác bước rửa"));
+
+    Map<String, Object> revertedRow =
+        jdbcTemplate.queryForMap(
+            "SELECT stage, is_admin_reversion, recorded_by_account_id, note"
+                + " FROM processing_stage_records WHERE service_order_id = ? ORDER BY id DESC LIMIT 1",
+            orderId);
+    assertThat(revertedRow.get("stage")).isEqualTo("DEVELOPING");
+    assertThat(revertedRow.get("is_admin_reversion")).isEqualTo(true);
+    assertThat(((Number) revertedRow.get("recorded_by_account_id")).longValue())
+        .isEqualTo(admin.getId());
+
+    Map<String, Object> audit =
+        jdbcTemplate.queryForMap(
+            "SELECT before_data ->> 'stage' AS before_stage, after_data ->> 'stage' AS after_stage,"
+                + " after_data ->> 'adminReversion' AS admin_reversion"
+                + " FROM audit_logs WHERE action = 'ORDER_STAGE_REVERTED'"
+                + " AND target_type = 'SERVICE_ORDER' AND target_id = ?",
+            orderId);
+    assertThat(audit.get("before_stage")).isEqualTo("DRYING");
+    assertThat(audit.get("after_stage")).isEqualTo("DEVELOPING");
+    assertThat(audit.get("admin_reversion")).isEqualTo("true");
+
+    verify(notificationService)
+        .notify(eq(photographer.getId()), eq(NotificationType.ORDER_STATUS), any(), any(), any());
+    verify(notificationService)
+        .notify(eq(owner.getId()), eq(NotificationType.ORDER_STATUS), any(), any(), any());
+
+    // Sau khi lùi về DEVELOPING, lab đi tiếp WASHING hợp lệ.
+    recordStage(owner, orderId, "WASHING", "Rửa lại")
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.stages", hasSize(6)))
+        .andExpect(jsonPath("$.stages[5].stage").value("WASHING"))
+        .andExpect(jsonPath("$.stages[5].adminReversion").value(false));
+  }
+
+  /**
+   * TC-F13-04 (UC24, BR-26): đơn 2 cuộn {@code IN_PROCESSING}; lab ghi nhận cuộn #1 hỏng kèm 1 ảnh
+   * bằng chứng → cuộn #1 sang {@code DAMAGED}, miễn phí, {@code finalTotalVnd} giảm từ 220.000 xuống
+   * 110.000 VND; Photographer xem được {@code damageNote} và {@code damagePhotos}; thiếu ảnh trả
+   * 400, ghi hỏng lần hai trả 409.
+   */
+  @Test
+  @DisplayName("TC-F13-04 UC24 BR-26 damaged roll with photo -> DAMAGED, free, finalTotalVnd recalculated")
+  void tcF1304_recordRollDamage_recalculatesPriceAndSavesEvidence() throws Exception {
+    long orderId = createOrderInProcessing(photographer, 2);
+    List<Long> rollIds =
+        jdbcTemplate.queryForList(
+            "SELECT id FROM film_rolls WHERE service_order_id = ? ORDER BY roll_sequence",
+            Long.class,
+            orderId);
+    long roll1Id = rollIds.get(0);
+    recordStage(owner, orderId, "DEVELOPING", null).andExpect(status().isOk());
+    clearInvocations(notificationService);
+
+    byte[] png = new byte[256];
+    byte[] header = {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    System.arraycopy(header, 0, png, 0, header.length);
+
+    // Thiếu ảnh -> 400 VALIDATION_ERROR.
+    mockMvc
+        .perform(
+            multipart(LAB_ORDERS_PATH + "/" + orderId + "/rolls/" + roll1Id + "/damage")
+                .file(
+                    new MockMultipartFile(
+                        "data",
+                        "",
+                        MediaType.APPLICATION_JSON_VALUE,
+                        "{\"damageNote\":\"Phim bị cháy sáng\"}"
+                            .getBytes(StandardCharsets.UTF_8)))
+                .header(HttpHeaders.AUTHORIZATION, bearer(owner)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.errorCode").value("VALIDATION_ERROR"));
+
+    // Gửi đủ ghi chú + 1 ảnh PNG -> cuộn 1 DAMAGED, finalTotalVnd = 110_000.
+    mockMvc
+        .perform(
+            multipart(LAB_ORDERS_PATH + "/" + orderId + "/rolls/" + roll1Id + "/damage")
+                .file(
+                    new MockMultipartFile(
+                        "data",
+                        "",
+                        MediaType.APPLICATION_JSON_VALUE,
+                        "{\"damageNote\":\"Phim cháy sáng toàn bộ không lên hình\"}"
+                            .getBytes(StandardCharsets.UTF_8)))
+                .file(new MockMultipartFile("photos", "damage.png", "image/png", png))
+                .header(HttpHeaders.AUTHORIZATION, bearer(owner)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.finalTotalVnd").value(110_000))
+        .andExpect(jsonPath("$.rolls[0].id").value(roll1Id))
+        .andExpect(jsonPath("$.rolls[0].status").value("DAMAGED"))
+        .andExpect(
+            jsonPath("$.rolls[0].damageNote").value("Phim cháy sáng toàn bộ không lên hình"))
+        .andExpect(jsonPath("$.rolls[0].damagePhotos", hasSize(1)))
+        .andExpect(jsonPath("$.rolls[0].damagePhotos[0].url", notNullValue()))
+        .andExpect(jsonPath("$.rolls[1].status").value("RECEIVED"));
+
+    // Ghi hỏng lần hai trên cùng cuộn -> 409 ORDER_STATUS_CONFLICT.
+    mockMvc
+        .perform(
+            multipart(LAB_ORDERS_PATH + "/" + orderId + "/rolls/" + roll1Id + "/damage")
+                .file(
+                    new MockMultipartFile(
+                        "data",
+                        "",
+                        MediaType.APPLICATION_JSON_VALUE,
+                        "{\"damageNote\":\"Ghi lại lần hai\"}".getBytes(StandardCharsets.UTF_8)))
+                .file(new MockMultipartFile("photos", "damage2.png", "image/png", png))
+                .header(HttpHeaders.AUTHORIZATION, bearer(owner)))
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.errorCode").value("ORDER_STATUS_CONFLICT"));
+
+    // Photographer xem chi tiết đơn thấy giá mới, damageNote và ảnh bằng chứng.
+    getOrder(photographer, orderId)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.finalTotalVnd").value(110_000))
+        .andExpect(jsonPath("$.rolls[0].status").value("DAMAGED"))
+        .andExpect(
+            jsonPath("$.rolls[0].damageNote").value("Phim cháy sáng toàn bộ không lên hình"))
+        .andExpect(jsonPath("$.rolls[0].damagePhotos", hasSize(1)))
+        .andExpect(jsonPath("$.rolls[0].damagePhotos[0].url", notNullValue()));
+
+    verify(notificationService)
+        .notify(eq(photographer.getId()), eq(NotificationType.ORDER_STATUS), any(), any(), any());
   }
 
   // --- Lab ghi công đoạn: lỗi ---

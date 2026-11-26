@@ -1,5 +1,6 @@
 package com.fa26se088.filmlink.service.order.impl;
 
+import com.fa26se088.filmlink.client.storage.StorageClient;
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.lab.response.FilmLabBriefResponse;
@@ -15,13 +16,17 @@ import com.fa26se088.filmlink.dto.order.request.CancelServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchServiceOrderRequest;
+import com.fa26se088.filmlink.dto.order.response.FilmRollDamagePhotoResponse;
 import com.fa26se088.filmlink.dto.payment.ClosedOrderCommission;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmRollQuoteResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderCreationResult;
+import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderQuoteResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderResponse;
+import com.fa26se088.filmlink.dto.order.response.ServiceOrderSummaryResponse;
+import com.fa26se088.filmlink.dto.payment.ClosedOrderCommission;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.enums.ServicePackageStatus;
@@ -29,6 +34,7 @@ import com.fa26se088.filmlink.entity.machine.enums.ServiceTier;
 import com.fa26se088.filmlink.entity.masterdata.enums.SystemParameterKey;
 import com.fa26se088.filmlink.entity.notification.enums.NotificationType;
 import com.fa26se088.filmlink.entity.order.FilmRoll;
+import com.fa26se088.filmlink.entity.order.FilmRollDamagePhoto;
 import com.fa26se088.filmlink.entity.order.ServiceOrder;
 import com.fa26se088.filmlink.entity.order.enums.FilmHandoverMethod;
 import com.fa26se088.filmlink.entity.order.enums.FilmRollStatus;
@@ -38,6 +44,7 @@ import com.fa26se088.filmlink.exception.BusinessException;
 import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.exception.GlobalExceptionHandler.FieldViolation;
 import com.fa26se088.filmlink.mapper.order.ServiceOrderMapper;
+import com.fa26se088.filmlink.repository.order.FilmRollDamagePhotoRepository;
 import com.fa26se088.filmlink.repository.order.FilmRollRepository;
 import com.fa26se088.filmlink.repository.order.FilmRollRepository.RollCountRow;
 import com.fa26se088.filmlink.repository.order.ProcessingStageRecordRepository;
@@ -54,6 +61,7 @@ import com.fa26se088.filmlink.service.masterdata.SystemParameterService;
 import com.fa26se088.filmlink.service.notification.event.NotificationEvent;
 import com.fa26se088.filmlink.service.order.DigitalFilmArchiveService;
 import com.fa26se088.filmlink.service.order.ServiceOrderService;
+import com.fa26se088.filmlink.service.payment.CommissionService;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -130,6 +138,7 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
 
   private final ServiceOrderRepository serviceOrderRepository;
   private final FilmRollRepository filmRollRepository;
+  private final FilmRollDamagePhotoRepository filmRollDamagePhotoRepository;
   private final FilmLabService filmLabService;
   private final MasterdataService masterdataService;
   private final SystemParameterService systemParameterService;
@@ -140,6 +149,7 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
   private final ProcessingStageRecordRepository processingStageRecordRepository;
   private final FilmHandoverService filmHandoverService;
   private final ArchiveService archiveService;
+  private final StorageClient storageClient;
   private final CommissionService commissionService;
   private final Clock clock;
 
@@ -636,9 +646,11 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
           "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
     }
 
-    // BR-10 / SPEC-00 §4.6: ghi nhận hoa hồng khi đơn CLOSED trong cùng transaction.
+    // BR-10, BR-26 / SPEC-00 §4.6: ghi nhận hoa hồng khi đơn CLOSED trong cùng transaction; chỉ lấy
+    // gói của các cuộn RECEIVED (cuộn DAMAGED / NOT_RECEIVED hoa hồng = 0).
     List<Long> servicePackageIds =
         filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId()).stream()
+            .filter(roll -> roll.getStatus() == FilmRollStatus.RECEIVED)
             .map(FilmRoll::getServicePackageId)
             .distinct()
             .toList();
@@ -793,8 +805,32 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
         processingStageRecordRepository.findByServiceOrderIdOrderByRecordedAtAscIdAsc(
             order.getId()),
         filmHandoverService.getByServiceOrderId(order.getId()),
+        loadDamagePhotos(rolls),
         archiveRollIds(order, rolls),
         payment);
+  }
+
+  private Map<Long, List<FilmRollDamagePhotoResponse>> loadDamagePhotos(List<FilmRoll> rolls) {
+    List<Long> damagedRollIds =
+        rolls.stream()
+            .filter(roll -> roll.getStatus() == FilmRollStatus.DAMAGED)
+            .map(FilmRoll::getId)
+            .toList();
+    if (damagedRollIds.isEmpty()) {
+      return Map.of();
+    }
+    return filmRollDamagePhotoRepository
+        .findByFilmRollIdInOrderByFilmRollIdAscIdAsc(damagedRollIds)
+        .stream()
+        .collect(
+            Collectors.groupingBy(
+                FilmRollDamagePhoto::getFilmRollId,
+                LinkedHashMap::new,
+                Collectors.mapping(
+                    photo ->
+                        serviceOrderMapper.toDamagePhotoResponse(
+                            photo, storageClient.signedUrl(photo.getBlobKey())),
+                    Collectors.toList())));
   }
 
   /**
