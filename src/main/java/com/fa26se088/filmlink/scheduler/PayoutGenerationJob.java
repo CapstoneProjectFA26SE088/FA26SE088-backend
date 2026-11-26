@@ -14,6 +14,7 @@ public class PayoutGenerationJob {
 
   private final PayoutService payoutService;
 
+  /** Thực thi job định kỳ lúc 01:30 sáng theo múi giờ Việt Nam. */
   @Scheduled(cron = "${filmlink.jobs.payout-generation.cron}", zone = "Asia/Ho_Chi_Minh")
   public void run() {
     int created = payoutService.generateDuePayouts();

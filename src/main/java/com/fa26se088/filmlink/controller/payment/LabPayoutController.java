@@ -28,6 +28,7 @@ public class LabPayoutController {
 
   private final PayoutService payoutService;
 
+  /** Lấy thông tin tài khoản ngân hàng nhận tiền hiện hành của Film Lab. */
   @GetMapping("/payout-account")
   @PreAuthorize("hasRole('FILM_LAB_OWNER')")
   public ResponseEntity<PayoutAccountResponse> getPayoutAccount(
@@ -35,6 +36,7 @@ public class LabPayoutController {
     return ResponseEntity.ok(payoutService.getMyPayoutAccount(owner));
   }
 
+  /** Tạo mới hoặc cập nhật tài khoản ngân hàng nhận tiền của Film Lab. */
   @PutMapping("/payout-account")
   @PreAuthorize("hasRole('FILM_LAB_OWNER')")
   public ResponseEntity<PayoutAccountResponse> updatePayoutAccount(
@@ -43,6 +45,7 @@ public class LabPayoutController {
     return ResponseEntity.ok(payoutService.updateMyPayoutAccount(request, owner));
   }
 
+  /** Xem lịch sử các đợt chi trả của Film Lab đang sở hữu. */
   @GetMapping("/payouts")
   @PreAuthorize("hasRole('FILM_LAB_OWNER')")
   public ResponseEntity<PageResponse<PayoutResponse>> myPayouts(

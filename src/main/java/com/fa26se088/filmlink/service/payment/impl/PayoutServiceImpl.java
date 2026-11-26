@@ -54,7 +54,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-/** Thực thi quản lý tài khoản nhận tiền, sinh đợt giải ngân và ghi nhận chi trả cho Lab (UC35, UC36). */
+/**
+ * Thực thi quản lý tài khoản nhận tiền, sinh đợt giải ngân và chi trả cho Lab (UC35, UC36).
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -151,7 +153,7 @@ public class PayoutServiceImpl implements PayoutService {
 
     String blobKey = uploadReceipt(receipt);
     Instant now = clock.instant();
-    Map<String, Object> before = Map.of("status", payout.getStatus().name());
+    final Map<String, Object> before = Map.of("status", payout.getStatus().name());
 
     payout.setStatus(PayoutStatus.PAID);
     payout.setReceiptBlobKey(blobKey);

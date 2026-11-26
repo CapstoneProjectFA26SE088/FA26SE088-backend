@@ -30,6 +30,7 @@ public class AdminPayoutController {
 
   private final PayoutService payoutService;
 
+  /** Tra cứu danh sách đợt chi trả toàn hệ thống có phân trang và lọc theo trạng thái. */
   @GetMapping
   @PreAuthorize("hasRole('ADMIN')")
   public ResponseEntity<PageResponse<PayoutResponse>> list(
@@ -41,6 +42,7 @@ public class AdminPayoutController {
         PageResponse.from(payoutService.getAllPayouts(status, pageable, admin)));
   }
 
+  /** Xem chi tiết một đợt chi trả và danh sách các dòng đơn hàng bên trong. */
   @GetMapping("/{id}")
   @PreAuthorize("hasRole('ADMIN')")
   public ResponseEntity<PayoutResponse> detail(
@@ -48,6 +50,7 @@ public class AdminPayoutController {
     return ResponseEntity.ok(payoutService.getPayoutById(id, admin));
   }
 
+  /** Ghi nhận đã chuyển khoản giải ngân kèm file biên lai chứng từ (BR-31). */
   @PostMapping(path = "/{id}/paid", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
   @PreAuthorize("hasRole('ADMIN')")
   public ResponseEntity<PayoutResponse> markPaid(
