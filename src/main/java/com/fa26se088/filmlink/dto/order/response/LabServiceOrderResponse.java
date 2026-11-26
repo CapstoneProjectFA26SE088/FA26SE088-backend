@@ -19,7 +19,8 @@ import java.util.List;
  *
  * <p>{@code deliveredAt}, {@code keepNegativesAtLab} có giá trị sau khi lab trả phim / giữ âm bản
  * (UC27); {@code closedAt} sau khi Photographer xác nhận đã nhận (UC28). {@code cancelledAt},
- * {@code cancellationReason} có giá trị khi Photographer huỷ đơn (UC60).
+ * {@code cancellationReason} có giá trị khi Photographer huỷ đơn (UC60); {@code rejectionReason}
+ * có giá trị khi Lab từ chối đơn (UC22).
  *
  * <p>Chưa có shipment, thanh toán (task sau).
  */
@@ -48,6 +49,7 @@ public record LabServiceOrderResponse(
     Instant deliveredAt,
     Instant closedAt,
     Instant cancelledAt,
+    String rejectionReason,
     String cancellationReason,
     boolean keepNegativesAtLab,
     OrderPhotographerResponse photographer,

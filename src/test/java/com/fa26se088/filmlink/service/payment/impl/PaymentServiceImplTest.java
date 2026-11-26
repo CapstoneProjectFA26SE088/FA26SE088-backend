@@ -271,6 +271,7 @@ class PaymentServiceImplTest {
   void createOrderRefund_gatewayAccepts_succeeded() {
     Payment origin = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.SUCCEEDED);
     origin.setGatewayTransactionNo("VNPGW1");
+    when(paymentRepository.findByServiceOrderId(1L)).thenReturn(List.of(origin));
     when(paymentRepository.findByServiceOrderIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(origin));
     when(paymentGatewayClient.refund("TXN123456789", "VNPGW1", 50_000L, "huy don"))
         .thenReturn(true);
@@ -292,6 +293,7 @@ class PaymentServiceImplTest {
   @DisplayName("BR-39: cổng hoàn tiền lỗi -> refund AWAITING_MANUAL cho Admin")
   void createOrderRefund_gatewayError_awaitingManual() {
     Payment origin = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.SUCCEEDED);
+    when(paymentRepository.findByServiceOrderId(1L)).thenReturn(List.of(origin));
     when(paymentRepository.findByServiceOrderIdOrderByCreatedAtDesc(1L)).thenReturn(List.of(origin));
     when(paymentGatewayClient.refund(anyString(), any(), anyLong(), anyString()))
         .thenThrow(new IllegalStateException("timeout"));
@@ -305,9 +307,22 @@ class PaymentServiceImplTest {
   }
 
   @Test
+  @DisplayName("createOrderRefund vượt quá số tiền thực nhận (netPaidForOrder) -> PAYMENT_INVALID_STATE")
+  void createOrderRefund_exceedsNetPaid_throws() {
+    Payment origin = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.SUCCEEDED);
+    when(paymentRepository.findByServiceOrderId(1L)).thenReturn(List.of(origin));
+
+    assertThatThrownBy(() -> service.createOrderRefund(1L, 300_000L, "huy don"))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            ex -> assertThat(ex.getErrorCode()).isEqualTo(ErrorCode.PAYMENT_INVALID_STATE));
+    verify(paymentRepository, never()).save(any());
+  }
+
+  @Test
   @DisplayName("createOrderRefund khi đơn chưa có khoản thanh toán thành công -> PAYMENT_INVALID_STATE")
   void createOrderRefund_noSucceededPayment_throws() {
-    when(paymentRepository.findByServiceOrderIdOrderByCreatedAtDesc(1L)).thenReturn(List.of());
+    when(paymentRepository.findByServiceOrderId(1L)).thenReturn(List.of());
 
     assertThatThrownBy(() -> service.createOrderRefund(1L, 50_000L, "huy don"))
         .isInstanceOfSatisfying(
@@ -346,7 +361,8 @@ class PaymentServiceImplTest {
     Payment payment = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.PENDING);
     when(paymentGatewayClient.provider()).thenReturn("vnpay");
     when(paymentGatewayClient.verifySignature(any())).thenReturn(true);
-    when(paymentRepository.findByTransactionCode("TXN123456789")).thenReturn(Optional.of(payment));
+    when(paymentRepository.findByTransactionCodeForUpdate("TXN123456789"))
+        .thenReturn(Optional.of(payment));
     when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> i.getArgument(0));
 
     Map<String, String> ipnParams = new HashMap<>();
@@ -405,7 +421,8 @@ class PaymentServiceImplTest {
     Payment payment = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.SUCCEEDED);
     when(paymentGatewayClient.provider()).thenReturn("vnpay");
     when(paymentGatewayClient.verifySignature(any())).thenReturn(true);
-    when(paymentRepository.findByTransactionCode("TXN123456789")).thenReturn(Optional.of(payment));
+    when(paymentRepository.findByTransactionCodeForUpdate("TXN123456789"))
+        .thenReturn(Optional.of(payment));
 
     Map<String, String> ipnParams = Map.of(
         "vnp_TxnRef", "TXN123456789",
@@ -420,12 +437,35 @@ class PaymentServiceImplTest {
   }
 
   @Test
-  @DisplayName("PAY-07: IPN sai số tiền -> Từ chối, trả RspCode 04")
+  @DisplayName("PAY-05b: IPN cho giao dịch không ở trạng thái PENDING (VD: FAILED) -> Idempotent, trả RspCode 02")
+  void processVnPayIpn_nonPendingStatus_returns02WithoutModifying() {
+    Payment payment = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.FAILED);
+    when(paymentGatewayClient.provider()).thenReturn("vnpay");
+    when(paymentGatewayClient.verifySignature(any())).thenReturn(true);
+    when(paymentRepository.findByTransactionCodeForUpdate("TXN123456789"))
+        .thenReturn(Optional.of(payment));
+
+    Map<String, String> ipnParams = Map.of(
+        "vnp_TxnRef", "TXN123456789",
+        "vnp_Amount", "25000000",
+        "vnp_ResponseCode", "00");
+
+    VnPayIpnResponse response = service.processVnPayIpn(ipnParams);
+
+    assertThat(response.rspCode()).isEqualTo("02");
+    verify(paymentRepository, never()).save(any());
+    verify(eventPublisher, never()).publishEvent(any());
+  }
+
+  @Test
+  @DisplayName("PAY-07: IPN sai số tiền -> Đánh dấu FAILED, ghi audit, trả RspCode 04")
   void processVnPayIpn_wrongAmount_returns04() {
     Payment payment = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.PENDING);
     when(paymentGatewayClient.provider()).thenReturn("vnpay");
     when(paymentGatewayClient.verifySignature(any())).thenReturn(true);
-    when(paymentRepository.findByTransactionCode("TXN123456789")).thenReturn(Optional.of(payment));
+    when(paymentRepository.findByTransactionCodeForUpdate("TXN123456789"))
+        .thenReturn(Optional.of(payment));
+    when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> i.getArgument(0));
 
     Map<String, String> ipnParams = Map.of(
         "vnp_TxnRef", "TXN123456789",
@@ -435,7 +475,13 @@ class PaymentServiceImplTest {
     VnPayIpnResponse response = service.processVnPayIpn(ipnParams);
 
     assertThat(response.rspCode()).isEqualTo("04");
-    verify(paymentRepository, never()).save(any());
+    assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+    assertThat(payment.getFailureReason()).contains("250000");
+    verify(paymentRepository).save(payment);
+    verify(auditLogService).recordSuccess(argThat(entry ->
+        entry.action() == AuditAction.PAYMENT_FAILED
+            && entry.targetType() == AuditTargetType.PAYMENT
+            && entry.targetId().equals(10L)));
     verify(eventPublisher, never()).publishEvent(any());
   }
 
@@ -444,7 +490,8 @@ class PaymentServiceImplTest {
   void processVnPayIpn_orderNotFound_returns01() {
     when(paymentGatewayClient.provider()).thenReturn("vnpay");
     when(paymentGatewayClient.verifySignature(any())).thenReturn(true);
-    when(paymentRepository.findByTransactionCode("UNKNOWN_TXN")).thenReturn(Optional.empty());
+    when(paymentRepository.findByTransactionCodeForUpdate("UNKNOWN_TXN"))
+        .thenReturn(Optional.empty());
 
     Map<String, String> ipnParams = Map.of(
         "vnp_TxnRef", "UNKNOWN_TXN",
@@ -463,7 +510,8 @@ class PaymentServiceImplTest {
     Payment payment = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.PENDING);
     when(paymentGatewayClient.provider()).thenReturn("vnpay");
     when(paymentGatewayClient.verifySignature(any())).thenReturn(true);
-    when(paymentRepository.findByTransactionCode("TXN123456789")).thenReturn(Optional.of(payment));
+    when(paymentRepository.findByTransactionCodeForUpdate("TXN123456789"))
+        .thenReturn(Optional.of(payment));
     when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> i.getArgument(0));
 
     Map<String, String> ipnParams = new HashMap<>();

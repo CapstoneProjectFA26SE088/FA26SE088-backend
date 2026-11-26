@@ -7,22 +7,30 @@ import com.fa26se088.filmlink.entity.account.enums.UserAccountRole;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
+import com.fa26se088.filmlink.entity.masterdata.enums.SystemParameterKey;
 import com.fa26se088.filmlink.entity.payment.Commission;
+import com.fa26se088.filmlink.entity.payment.CommissionRateRule;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionCollectionMode;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionKind;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionStatus;
 import com.fa26se088.filmlink.exception.BusinessException;
 import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.mapper.payment.CommissionMapper;
+import com.fa26se088.filmlink.repository.payment.CommissionRateRuleRepository;
 import com.fa26se088.filmlink.repository.payment.CommissionRepository;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
+import com.fa26se088.filmlink.service.masterdata.SystemParameterService;
 import com.fa26se088.filmlink.service.payment.CommissionService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
@@ -39,9 +47,11 @@ public class CommissionServiceImpl implements CommissionService {
   private static final BigDecimal DEFAULT_COMMISSION_RATE = new BigDecimal("10.00"); // 10% mặc định theo BR-10
 
   private final CommissionRepository commissionRepository;
+  private final CommissionRateRuleRepository commissionRateRuleRepository;
   private final CommissionMapper commissionMapper;
   private final LabAccessService labAccessService;
   private final AuditLogService auditLogService;
+  private final SystemParameterService systemParameterService;
   private final Clock clock;
 
   /**
@@ -64,8 +74,8 @@ public class CommissionServiceImpl implements CommissionService {
 
     long baseAmount = Math.max(0, command.serviceValueVnd());
 
-    // Tỷ lệ mặc định 10% (BR-10); rule theo gói / theo lab làm ở P-04
-    BigDecimal rate = DEFAULT_COMMISSION_RATE;
+    // BR-10: ưu tiên tỷ lệ gói dịch vụ > lab > tham số mặc định hệ thống (10%)
+    BigDecimal rate = resolveCommissionRate(command.filmLabId(), command.servicePackageIds());
     long commissionAmount =
         BigDecimal.valueOf(baseAmount)
             .multiply(rate)
@@ -129,6 +139,47 @@ public class CommissionServiceImpl implements CommissionService {
       }
     }
     return commissionRepository.findByFilmLabId(labId, pageable).map(commissionMapper::toResponse);
+  }
+
+  /**
+   * BR-10: xác định tỷ lệ hoa hồng hiệu lực theo thứ tự ưu tiên:
+   * 1. Quy tắc theo Service Package (nếu đơn có gói được cấu hình riêng)
+   * 2. Quy tắc theo Film Lab
+   * 3. Tham số hệ thống {@code DEFAULT_COMMISSION_RATE} (fallback 10.00%).
+   */
+  private BigDecimal resolveCommissionRate(Long filmLabId, List<Long> servicePackageIds) {
+    if (servicePackageIds != null && !servicePackageIds.isEmpty()) {
+      Map<Long, BigDecimal> packageRates =
+          commissionRateRuleRepository.findByServicePackageIdIn(servicePackageIds).stream()
+              .filter(rule -> rule.getServicePackageId() != null)
+              .collect(
+                  Collectors.toMap(
+                      CommissionRateRule::getServicePackageId,
+                      CommissionRateRule::getRatePercent,
+                      (first, second) -> first));
+      for (Long packageId : servicePackageIds) {
+        BigDecimal packageRate = packageRates.get(packageId);
+        if (packageRate != null) {
+          return packageRate;
+        }
+      }
+    }
+
+    if (filmLabId != null) {
+      Optional<CommissionRateRule> labRule = commissionRateRuleRepository.findByFilmLabId(filmLabId);
+      if (labRule.isPresent()) {
+        return labRule.get().getRatePercent();
+      }
+    }
+
+    BigDecimal defaultRate =
+        systemParameterService.getDecimal(SystemParameterKey.DEFAULT_COMMISSION_RATE);
+    if (defaultRate == null) {
+      log.warn(
+          "[CommissionService] Tham số DEFAULT_COMMISSION_RATE chưa được seed, dùng giá trị mặc định 10%");
+      return DEFAULT_COMMISSION_RATE;
+    }
+    return defaultRate;
   }
 }
 

@@ -1,0 +1,21 @@
+# 15 domains of FilmLink Backend (FA26SE088)
+# Tier 0 (Foundation)
+account
+masterdata
+notification
+audit
+# Tier 1 (Catalogue)
+lab
+# Tier 2 (Order Services)
+machine
+delivery
+archive
+payment
+# Tier 3 (Core Business)
+order
+marketplace
+community
+# Tier 4 (Aggregation)
+ai
+moderation
+dashboard

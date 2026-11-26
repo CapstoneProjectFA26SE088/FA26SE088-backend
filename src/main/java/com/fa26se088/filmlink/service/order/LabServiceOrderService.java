@@ -8,6 +8,7 @@ import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordFilmReturnRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordFilmRollDamageRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
+import com.fa26se088.filmlink.dto.order.request.RejectServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
@@ -40,6 +41,24 @@ public interface LabServiceOrderService {
    *     khi đơn không còn chờ lab xác nhận
    */
   LabServiceOrderResponse accept(Long ownerAccountId, Long orderId);
+
+  /**
+   * UC22, BR-39: lab từ chối đơn đang {@code AWAITING_LAB_CONFIRMATION} (hoặc {@code AWAITING_FILM}
+   * trước khi nhận phim) → {@code CANCELLED}.
+   *
+   * <p>Bắt buộc có lý do 10–500 ký tự. Hoàn 100% tiền đã thu tự động qua domain payment (BR-39).
+   * Nếu phim đã gửi đi (UH-09), ghi nhận để tạo chiều trả phim với phí do lab chịu.
+   *
+   * @param ownerAccountId tài khoản Film Lab Owner đang đăng nhập
+   * @param orderId id của Service Order
+   * @param request body chứa lý do từ chối
+   * @return chi tiết đơn sau khi từ chối
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404), {@code
+   *     ORDER_STATUS_CONFLICT} (409) khi đơn không ở trạng thái được từ chối, {@code
+   *     VALIDATION_ERROR} (400) khi lý do không hợp lệ
+   */
+  LabServiceOrderResponse reject(
+      Long ownerAccountId, Long orderId, RejectServiceOrderRequest request);
 
   /**
    * UC23, BR-25: lab xác nhận đã nhận phim của đơn {@code AWAITING_FILM}, đếm từng cuộn, ghi bằng

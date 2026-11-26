@@ -12,6 +12,7 @@ import com.fa26se088.filmlink.dto.archive.response.ScanFileResponse;
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
 import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.delivery.request.RecordFilmHandoverRequest;
+import com.fa26se088.filmlink.dto.delivery.response.FilmHandoverResponse;
 import com.fa26se088.filmlink.dto.machine.CapacityProposal;
 import com.fa26se088.filmlink.dto.machine.CapacityRequest;
 import com.fa26se088.filmlink.dto.machine.RollGroup;
@@ -21,6 +22,7 @@ import com.fa26se088.filmlink.dto.order.request.FilmRollReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordFilmReturnRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordFilmRollDamageRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
+import com.fa26se088.filmlink.dto.order.request.RejectServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.FilmRollDamagePhotoResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
@@ -62,6 +64,9 @@ import com.fa26se088.filmlink.service.order.LabServiceOrderService;
 import com.fa26se088.filmlink.service.payment.PaymentService;
 import java.io.IOException;
 import java.io.InputStream;
+import com.fa26se088.filmlink.service.order.event.OrderAcceptedEvent;
+import com.fa26se088.filmlink.service.order.event.OrderRejectedEvent;
+import com.fa26se088.filmlink.service.payment.PaymentService;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -103,6 +108,9 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
   /** CR-02: mới nhất trước; {@code id} để thứ tự ổn định khi trùng {@code created_at}. */
   private static final Sort NEWEST_FIRST =
       Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
+
+  private static final Set<ServiceOrderStatus> REJECTABLE_BY_LAB =
+      Set.of(ServiceOrderStatus.AWAITING_LAB_CONFIRMATION, ServiceOrderStatus.AWAITING_FILM);
 
   private final ServiceOrderRepository serviceOrderRepository;
   private final FilmRollRepository filmRollRepository;
@@ -210,7 +218,16 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
           "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
     }
 
-    // TODO(P-09): gọi ShipmentService.createOrderPickup khi contract (SPEC-00 §4.6b) lên dev
+    if (order.getFilmHandoverMethod() == FilmHandoverMethod.PICKUP
+        || order.getFilmHandoverMethod() == FilmHandoverMethod.PARCEL_SHIPPING) {
+      eventPublisher.publishEvent(
+          new OrderAcceptedEvent(
+              order.getId(),
+              order.getOrderCode(),
+              order.getFilmLabId(),
+              order.getFilmHandoverMethod(),
+              order.getAcceptedAt()));
+    }
 
     auditLogService.recordSuccess(
         new AuditEntry(
@@ -221,6 +238,110 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
             Map.of("status", before.name()),
             Map.of("status", order.getStatus().name())));
     notifyPhotographerAccepted(lab, order);
+    return toLabResponse(order);
+  }
+
+  /**
+   * UC22, BR-39, UH-09: Film Lab Owner từ chối đơn.
+   *
+   * <ul>
+   *   <li>CR-14: chỉ đơn của lab mình; đơn của lab khác → 404 {@code ORDER_NOT_FOUND}.
+   *   <li>Chỉ từ chối được khi đơn ở trạng thái {@code AWAITING_LAB_CONFIRMATION} hoặc {@code
+   *       AWAITING_FILM}. Trạng thái khác → 409 {@code ORDER_STATUS_CONFLICT}.
+   *   <li>Khoá dòng bằng {@code SELECT ... FOR UPDATE}.
+   *   <li>Lý do từ chối 10–500 ký tự.
+   *   <li>Cập nhật trạng thái → {@code CANCELLED}, {@code cancelled_at = now}, {@code
+   *       cancelled_by_account_id = ownerAccountId}, {@code rejection_reason = reason}, {@code
+   *       cancellation_reason = reason}, {@code cancellation_fee_vnd = 0}.
+   *   <li>BR-39: Hoàn tiền 100% tự động nếu đã thanh toán trước (netPaid > 0): gọi {@code
+   *       createOrderRefund(orderId, netPaid, ...)}.
+   *   <li>UH-09: Nếu phim đã gửi đi (kiểm tra qua {@link FilmHandoverService#getByServiceOrderId}),
+   *       ghi nhận phí lab chịu trong audit log ({@code returnFeePayer = FILM_LAB}).
+   *   <li>Audit log {@code ORDER_CANCELLED}.
+   *   <li>Phát {@link OrderRejectedEvent} cho các domain liên quan.
+   *   <li>Báo Photographer qua {@link NotificationEvent}.
+   * </ul>
+   */
+  @Override
+  @Transactional
+  public LabServiceOrderResponse reject(
+      Long ownerAccountId, Long orderId, RejectServiceOrderRequest request) {
+    FilmLab lab = labAccessService.requireOwnedLab(ownerAccountId);
+    ServiceOrder order =
+        serviceOrderRepository
+            .findByIdAndFilmLabIdForUpdate(orderId, lab.getId())
+            .orElseThrow(LabServiceOrderServiceImpl::orderNotFound);
+    ServiceOrderStatus before = order.getStatus();
+    if (!REJECTABLE_BY_LAB.contains(before)) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Chỉ từ chối được đơn đang chờ xác nhận hoặc chờ nhận phim; đơn "
+              + order.getOrderCode()
+              + " đang ở trạng thái "
+              + before.name()
+              + ".");
+    }
+
+    String reason = request.reason() == null ? "" : request.reason().trim();
+    if (reason.length() < 10 || reason.length() > 500) {
+      throw new BusinessException(
+          ErrorCode.VALIDATION_ERROR,
+          "Lý do từ chối phải có độ dài từ 10 đến 500 ký tự.",
+          Map.of("field", "reason", "min", 10, "max", 500));
+    }
+
+    Instant now = clock.instant();
+    order.setStatus(ServiceOrderStatus.CANCELLED);
+    order.setCancelledAt(now);
+    order.setCancelledByAccountId(ownerAccountId);
+    order.setRejectionReason(reason);
+    order.setCancellationReason(reason);
+    order.setCancellationFeeVnd(0L);
+
+    try {
+      order = serviceOrderRepository.saveAndFlush(order);
+    } catch (OptimisticLockingFailureException ex) {
+      throw new BusinessException(
+          ErrorCode.ORDER_STATUS_CONFLICT,
+          "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
+    }
+
+    boolean filmAlreadyShipped = isFilmAlreadyShipped(order.getId());
+
+    long netPaid = paymentService.netPaidForOrder(order.getId());
+    if (netPaid > 0) {
+      paymentService.createOrderRefund(order.getId(), netPaid, "Lab từ chối đơn: " + reason);
+    }
+
+    eventPublisher.publishEvent(
+        new OrderRejectedEvent(
+            order.getId(),
+            order.getOrderCode(),
+            order.getPhotographerAccountId(),
+            order.getFilmLabId(),
+            netPaid,
+            reason,
+            filmAlreadyShipped,
+            now));
+
+    Map<String, Object> auditAfter = new LinkedHashMap<>();
+    auditAfter.put("status", order.getStatus().name());
+    auditAfter.put("rejectionReason", reason);
+    auditAfter.put("filmAlreadyShipped", filmAlreadyShipped);
+    if (filmAlreadyShipped) {
+      auditAfter.put("returnFeePayer", "FILM_LAB");
+    }
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ORDER_CANCELLED,
+            AuditTargetType.SERVICE_ORDER,
+            order.getId(),
+            null,
+            Map.of("status", before.name()),
+            auditAfter));
+
+    notifyPhotographerRejected(lab, order, reason, filmAlreadyShipped);
     return toLabResponse(order);
   }
 
@@ -1415,6 +1536,42 @@ public class LabServiceOrderServiceImpl implements LabServiceOrderService {
     eventPublisher.publishEvent(
         new NotificationEvent(
             order.getPhotographerAccountId(), NotificationType.ORDER_STATUS, title, body, null));
+  }
+
+  private boolean isFilmAlreadyShipped(Long orderId) {
+    List<FilmHandoverResponse> handovers = filmHandoverService.getByServiceOrderId(orderId);
+    if (handovers == null || handovers.isEmpty()) {
+      return false;
+    }
+    return handovers.stream()
+        .anyMatch(
+            h ->
+                h.handoverPoint() == HandoverPoint.COLLECTED_FROM_PHOTOGRAPHER
+                    || h.handoverPoint() == HandoverPoint.HANDED_TO_PARTNER);
+  }
+
+  private void notifyPhotographerRejected(
+      FilmLab lab, ServiceOrder order, String reason, boolean filmAlreadyShipped) {
+    String title = "Đơn " + order.getOrderCode() + " đã bị lab từ chối";
+    StringBuilder body =
+        new StringBuilder("Film Lab ")
+            .append(lab.getLabName())
+            .append(" đã từ chối tiếp nhận đơn ")
+            .append(order.getOrderCode())
+            .append(". Lý do: ")
+            .append(reason)
+            .append(".");
+    if (filmAlreadyShipped) {
+      body.append(
+          " Do phim đã được gửi đi, hệ thống sẽ phối hợp chuyển trả lại phim cho bạn (chi phí vận chuyển do lab chịu).");
+    }
+    eventPublisher.publishEvent(
+        new NotificationEvent(
+            order.getPhotographerAccountId(),
+            NotificationType.ORDER_STATUS,
+            title,
+            body.toString(),
+            null));
   }
 
   private static BusinessException orderNotFound() {

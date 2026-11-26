@@ -235,8 +235,8 @@ public class PaymentServiceImpl implements PaymentService {
       return VnPayIpnResponse.invalidSignature();
     }
 
-    // 3. Tra cứu giao dịch trong DB
-    Optional<Payment> optPayment = paymentRepository.findByTransactionCode(txnRef);
+    // 3. Tra cứu giao dịch trong DB kèm khoá bi quan để tránh race condition khi IPN gọi đồng thời
+    Optional<Payment> optPayment = paymentRepository.findByTransactionCodeForUpdate(txnRef);
     if (optPayment.isEmpty()) {
       paymentGatewayEventRepository.save(event);
       log.warn("[VNPay IPN] Không tìm thấy mã giao dịch: {}", txnRef);
@@ -246,7 +246,17 @@ public class PaymentServiceImpl implements PaymentService {
     Payment payment = optPayment.get();
     event.setPaymentId(payment.getId());
 
-    // 4. Kiểm tra số tiền nhận được so với số tiền của giao dịch (VNPay nhân 100)
+    // 4. Chỉ xử lý giao dịch đang PENDING; mọi trạng thái khác trả idempotent để tránh ghi đè
+    if (payment.getStatus() != PaymentStatus.PENDING) {
+      paymentGatewayEventRepository.save(event);
+      log.info(
+          "[VNPay IPN] Giao dịch không ở trạng thái PENDING (hiện tại: {}): txnRef={}",
+          payment.getStatus(),
+          txnRef);
+      return VnPayIpnResponse.alreadyConfirmed();
+    }
+
+    // 5. Kiểm tra số tiền nhận được so với số tiền của giao dịch (VNPay nhân 100)
     long expectedAmountX100 = payment.getAmountVnd() * 100;
     long receivedAmountX100;
     try {
@@ -257,20 +267,35 @@ public class PaymentServiceImpl implements PaymentService {
     }
 
     if (expectedAmountX100 != receivedAmountX100) {
+      payment.setStatus(PaymentStatus.FAILED);
+      payment.setFailureReason(
+          "Số tiền không khớp: kỳ vọng "
+              + payment.getAmountVnd()
+              + " VND, cổng báo "
+              + (receivedAmountX100 / 100)
+              + " VND");
+      payment.setGatewayResponseCode(vnpResponseCode);
+      payment.setGatewayTransactionNo(vnpTransactionNo);
+      Payment updated = paymentRepository.save(payment);
       paymentGatewayEventRepository.save(event);
+      auditLogService.recordSuccess(
+          new AuditEntry(
+              AuditAction.PAYMENT_FAILED,
+              AuditTargetType.PAYMENT,
+              updated.getId(),
+              "Thanh toán thất bại do sai lệch số tiền từ cổng: kỳ vọng "
+                  + updated.getAmountVnd()
+                  + " VND, cổng báo "
+                  + (receivedAmountX100 / 100)
+                  + " VND",
+              null,
+              null));
       log.warn(
           "[VNPay IPN] Số tiền không khớp cho txnRef={}: kỳ vọng={}, nhận={}",
           txnRef,
           expectedAmountX100,
           receivedAmountX100);
       return VnPayIpnResponse.invalidAmount();
-    }
-
-    // 5. Kiểm tra tính Idempotent: Nếu đã thành công trước đó thì không làm lại
-    if (payment.getStatus() == PaymentStatus.SUCCEEDED) {
-      paymentGatewayEventRepository.save(event);
-      log.info("[VNPay IPN] Giao dịch đã được xác nhận thành công trước đó: txnRef={}", txnRef);
-      return VnPayIpnResponse.alreadyConfirmed();
     }
 
     // 6. Cập nhật trạng thái thanh toán
@@ -478,6 +503,17 @@ public class PaymentServiceImpl implements PaymentService {
   public void createOrderRefund(Long serviceOrderId, long amountVnd, String reason) {
     if (amountVnd <= 0) {
       throw new BusinessException(ErrorCode.PAYMENT_INVALID_STATE, "Số tiền hoàn phải lớn hơn 0.");
+    }
+
+    long netPaid = netPaidForOrder(serviceOrderId);
+    if (amountVnd > netPaid) {
+      throw new BusinessException(
+          ErrorCode.PAYMENT_INVALID_STATE,
+          "Số tiền hoàn ("
+              + amountVnd
+              + " VND) không thể lớn hơn số tiền thực nhận của đơn ("
+              + netPaid
+              + " VND).");
     }
 
     // Khoản thanh toán IN gần nhất đã SUCCEEDED của đơn, dùng làm refunded_payment_id

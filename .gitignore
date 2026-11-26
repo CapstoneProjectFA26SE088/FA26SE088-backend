@@ -50,3 +50,7 @@ docs
 docs/*
 CLAUDE.md
 docs/
+
+.agents/
+AGENTS.md
+lombok.config
