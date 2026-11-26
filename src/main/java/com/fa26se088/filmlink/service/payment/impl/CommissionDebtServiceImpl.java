@@ -7,6 +7,7 @@ import com.fa26se088.filmlink.entity.account.enums.UserAccountRole;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
+import com.fa26se088.filmlink.entity.masterdata.enums.SystemParameterKey;
 import com.fa26se088.filmlink.entity.payment.Commission;
 import com.fa26se088.filmlink.entity.payment.CommissionDebt;
 import com.fa26se088.filmlink.entity.payment.Payment;
@@ -26,6 +27,7 @@ import com.fa26se088.filmlink.repository.payment.PaymentRepository;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
+import com.fa26se088.filmlink.service.masterdata.SystemParameterService;
 import com.fa26se088.filmlink.service.payment.CommissionDebtService;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -56,6 +58,7 @@ public class CommissionDebtServiceImpl implements CommissionDebtService {
   private final CommissionDebtMapper debtMapper;
   private final LabAccessService labAccessService;
   private final AuditLogService auditLogService;
+  private final SystemParameterService systemParameterService;
   private final Clock clock;
 
   @Override
@@ -89,8 +92,14 @@ public class CommissionDebtServiceImpl implements CommissionDebtService {
       return null;
     }
 
-    // BR-20: Hạn thanh toán mặc định là ngày 10 tháng sau
-    LocalDate dueDate = nextMonthFirstDay.withDayOfMonth(10);
+    // BR-20: Hạn thanh toán đọc từ tham số hệ thống BILLING_DUE_DAY_OF_MONTH (mặc định ngày 10 tháng sau)
+    Integer configuredDueDay =
+        systemParameterService.getInteger(SystemParameterKey.BILLING_DUE_DAY_OF_MONTH);
+    int dueDay =
+        (configuredDueDay != null && configuredDueDay >= 1 && configuredDueDay <= 28)
+            ? configuredDueDay
+            : 10;
+    LocalDate dueDate = nextMonthFirstDay.withDayOfMonth(dueDay);
 
     CommissionDebt debt = new CommissionDebt();
     debt.setFilmLabId(labId);
@@ -122,6 +131,16 @@ public class CommissionDebtServiceImpl implements CommissionDebtService {
         labId, savedDebt.getId(), totalDebtVnd);
 
     return debtMapper.toResponse(savedDebt);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<Long> findLabIdsWithUnbilledCommissions(LocalDate period) {
+    LocalDate firstDay = period.withDayOfMonth(1);
+    Instant threshold =
+        firstDay.plusMonths(1).atStartOfDay(ZoneId.of("Asia/Ho_Chi_Minh")).toInstant();
+    return commissionRepository.findDistinctLabIdsWithUnbilledCommissions(
+        List.of(CommissionStatus.OPEN, CommissionStatus.DEFERRED), threshold);
   }
 
   @Override

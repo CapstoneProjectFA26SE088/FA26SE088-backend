@@ -74,6 +74,9 @@ filmlink:
     # Chạy lúc 2:00 AM giờ VN mỗi ngày (giờ thấp điểm, tránh tranh chấp tải).
     account-purge-unverified:
       cron: "0 0 2 * * *"
+    # UC32 / PAY-05: chốt kỳ nợ hoa hồng tháng trước vào 00:15 ngày 1 hàng tháng (giờ VN).
+    commission-debt-generation:
+      cron: "0 15 0 1 * *"
 
 spring:
   config:
