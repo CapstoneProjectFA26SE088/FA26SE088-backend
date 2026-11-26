@@ -35,7 +35,8 @@ public enum StoragePurpose {
   PAYOUT_RECEIPT(
       "payout-receipt",
       10 * StoragePurpose.MB,
-      Set.of(StorageFileType.PDF, StorageFileType.JPEG, StorageFileType.PNG));
+      Set.of(StorageFileType.PDF, StorageFileType.JPEG, StorageFileType.PNG)),
+
   /** Ảnh bằng chứng cuộn phim hỏng (UC24, BR-26): JPG/PNG, tối đa 10 MB mỗi file. */
   DAMAGE_PHOTO(
       "damage-photo", 10 * StoragePurpose.MB, Set.of(StorageFileType.JPEG, StorageFileType.PNG));
