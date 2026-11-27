@@ -143,6 +143,7 @@ public enum AuditAction {
   COMMISSION_DEBT_SETTLED,
   PAYOUT_CREATED,
   PAYOUT_EXECUTED,
+  PAYOUT_ACCOUNT_UPDATED,
 
   // --- ai ---
   /**

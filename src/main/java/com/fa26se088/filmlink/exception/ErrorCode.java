@@ -132,6 +132,11 @@ public enum ErrorCode {
   PAYMENT_NOT_FOUND(HttpStatus.NOT_FOUND, null),
   PAYMENT_INVALID_STATE(HttpStatus.CONFLICT, null),
   PAYMENT_ACCESS_DENIED(HttpStatus.FORBIDDEN, null),
+  PAYOUT_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  PAYOUT_INVALID_STATE(HttpStatus.CONFLICT, null),
+  PAYOUT_RECEIPT_REQUIRED(HttpStatus.BAD_REQUEST, null),
+  PAYOUT_ACCOUNT_NOT_FOUND(HttpStatus.NOT_FOUND, null),
+  PAYOUT_ACCOUNT_REQUIRED(HttpStatus.UNPROCESSABLE_CONTENT, null),
 
   // --- delivery / geocoding (client/maps, client/delivery) ---
   /** DEL-GEO-01: API key Google Maps chưa được cấu hình. */
