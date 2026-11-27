@@ -29,7 +29,17 @@ public enum StoragePurpose {
    * Ảnh xem trước (Preview Scan) của một cuộn (UC26, BR-08): chỉ JPG, tối đa 5 MB ({@code
    * ck_scan_files_size}); cạnh dài ≤ 2048 px do domain archive kiểm.
    */
-  PREVIEW_SCAN("preview-scan", 5 * StoragePurpose.MB, Set.of(StorageFileType.JPEG));
+  PREVIEW_SCAN("preview-scan", 5 * StoragePurpose.MB, Set.of(StorageFileType.JPEG)),
+
+  /** Biên lai Admin chuyển khoản chi trả cho lab (UC35, BR-31): PDF/JPG/PNG, tối đa 10 MB. */
+  PAYOUT_RECEIPT(
+      "payout-receipt",
+      10 * StoragePurpose.MB,
+      Set.of(StorageFileType.PDF, StorageFileType.JPEG, StorageFileType.PNG)),
+
+  /** Ảnh bằng chứng cuộn phim hỏng (UC24, BR-26): JPG/PNG, tối đa 10 MB mỗi file. */
+  DAMAGE_PHOTO(
+      "damage-photo", 10 * StoragePurpose.MB, Set.of(StorageFileType.JPEG, StorageFileType.PNG));
 
   private static final long MB = 1024L * 1024L;
 

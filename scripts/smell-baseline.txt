@@ -1,0 +1,8 @@
+S01-DATA-ON-ENTITY|src/main/java/com/fa26se088/filmlink/entity/delivery/WebhookEvent.java
+S03-TRY-IN-CONTROLLER|src/main/java/com/fa26se088/filmlink/controller/account/LabApplicationController.java
+S04-ASIA-SAIGON|src/main/java/com/fa26se088/filmlink/scheduler/package-info.java
+S05-WORKAROUND-COMMENT|src/main/java/com/fa26se088/filmlink/service/masterdata/impl/MasterdataAdminServiceImpl.java
+S05-WORKAROUND-COMMENT|src/main/java/com/fa26se088/filmlink/service/order/impl/LabServiceOrderServiceImpl.java
+S05-WORKAROUND-COMMENT|src/main/java/com/fa26se088/filmlink/service/order/impl/ServiceOrderServiceImpl.java
+S07-SCHEDULED-NO-ZONE|src/main/java/com/fa26se088/filmlink/scheduler/AccountPurgeUnverifiedJob.java
+S09-HARDCODED-SECRET|src/main/resources/application.yml

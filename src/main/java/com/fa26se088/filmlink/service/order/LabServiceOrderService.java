@@ -6,7 +6,9 @@ import com.fa26se088.filmlink.dto.common.PageResponse;
 import com.fa26se088.filmlink.dto.order.request.ConfirmFilmReceiptRequest;
 import com.fa26se088.filmlink.dto.order.request.ConfirmScheduleRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordFilmReturnRequest;
+import com.fa26se088.filmlink.dto.order.request.RecordFilmRollDamageRequest;
 import com.fa26se088.filmlink.dto.order.request.RecordProcessingStageRequest;
+import com.fa26se088.filmlink.dto.order.request.RejectServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchLabServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
@@ -39,6 +41,24 @@ public interface LabServiceOrderService {
    *     khi đơn không còn chờ lab xác nhận
    */
   LabServiceOrderResponse accept(Long ownerAccountId, Long orderId);
+
+  /**
+   * UC22, BR-39: lab từ chối đơn đang {@code AWAITING_LAB_CONFIRMATION} (hoặc {@code AWAITING_FILM}
+   * trước khi nhận phim) → {@code CANCELLED}.
+   *
+   * <p>Bắt buộc có lý do 10–500 ký tự. Hoàn 100% tiền đã thu tự động qua domain payment (BR-39).
+   * Nếu phim đã gửi đi (UH-09), ghi nhận để tạo chiều trả phim với phí do lab chịu.
+   *
+   * @param ownerAccountId tài khoản Film Lab Owner đang đăng nhập
+   * @param orderId id của Service Order
+   * @param request body chứa lý do từ chối
+   * @return chi tiết đơn sau khi từ chối
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404), {@code
+   *     ORDER_STATUS_CONFLICT} (409) khi đơn không ở trạng thái được từ chối, {@code
+   *     VALIDATION_ERROR} (400) khi lý do không hợp lệ
+   */
+  LabServiceOrderResponse reject(
+      Long ownerAccountId, Long orderId, RejectServiceOrderRequest request);
 
   /**
    * UC23, BR-25: lab xác nhận đã nhận phim của đơn {@code AWAITING_FILM}, đếm từng cuộn, ghi bằng
@@ -85,6 +105,24 @@ public interface LabServiceOrderService {
    */
   LabServiceOrderResponse recordStage(
       Long ownerAccountId, Long orderId, RecordProcessingStageRequest request);
+
+  /**
+   * UC24, BR-26: lab ghi nhận một cuộn phim {@code RECEIVED} của đơn {@code IN_PROCESSING} bị hỏng
+   * (cháy sáng, loá toàn bộ, không lên hình) kèm 1–10 ảnh bằng chứng → cuộn chuyển {@code DAMAGED},
+   * miễn phí cuộn hỏng, tính lại {@code final_total_vnd}, hoàn tiền chênh lệch nếu khách đã thanh
+   * toán online dư, và báo Photographer.
+   *
+   * @throws com.fa26se088.filmlink.exception.BusinessException {@code ORDER_NOT_FOUND} (404),
+   *     {@code ORDER_STATUS_CONFLICT} (409: đơn không IN_PROCESSING hoặc cuộn đã DAMAGED), {@code
+   *     ORDER_ROLL_NOT_FOUND} (404), {@code VALIDATION_ERROR} (400: số ảnh ngoài 1–10 hoặc ghi chú
+   *     rỗng), lỗi {@code STORAGE_*} khi ảnh sai loại / quá dung lượng
+   */
+  LabServiceOrderResponse recordRollDamage(
+      Long ownerAccountId,
+      Long orderId,
+      Long rollId,
+      RecordFilmRollDamageRequest request,
+      List<MultipartFile> photos);
 
   /**
    * UC26, BR-08: lab thêm ảnh xem trước (1–40 JPG mỗi lần) cho một cuộn {@code RECEIVED} của đơn

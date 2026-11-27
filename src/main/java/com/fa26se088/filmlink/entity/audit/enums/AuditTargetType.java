@@ -41,6 +41,7 @@ public enum AuditTargetType {
   COMMISSION,
   COMMISSION_DEBT,
   PAYOUT,
+  PAYOUT_ACCOUNT,
 
   // --- ai ---
   /** Knowledge Base Entry (ERD #46): chunk của Expert Article đã duyệt (BR-29). */

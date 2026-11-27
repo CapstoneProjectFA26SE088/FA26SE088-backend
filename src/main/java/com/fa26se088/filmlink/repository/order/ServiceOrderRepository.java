@@ -21,6 +21,11 @@ public interface ServiceOrderRepository extends JpaRepository<ServiceOrder, Long
   /** Mã đơn đã dùng chưa ({@code uq_service_orders_code}). */
   boolean existsByOrderCode(String orderCode);
 
+  /** UC24: {@code SELECT ... FOR UPDATE} trên dòng đơn cho thao tác quản trị của Admin. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select o from ServiceOrder o where o.id = :id")
+  Optional<ServiceOrder> findByIdForUpdate(@Param("id") Long id);
+
   /** UC22: đơn {@code id} chỉ khi thuộc lab {@code filmLabId}. */
   Optional<ServiceOrder> findByIdAndFilmLabId(Long id, Long filmLabId);
 

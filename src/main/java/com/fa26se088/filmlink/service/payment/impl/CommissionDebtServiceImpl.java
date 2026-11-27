@@ -7,9 +7,11 @@ import com.fa26se088.filmlink.entity.account.enums.UserAccountRole;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
 import com.fa26se088.filmlink.entity.audit.enums.AuditTargetType;
 import com.fa26se088.filmlink.entity.lab.FilmLab;
+import com.fa26se088.filmlink.entity.masterdata.enums.SystemParameterKey;
 import com.fa26se088.filmlink.entity.payment.Commission;
 import com.fa26se088.filmlink.entity.payment.CommissionDebt;
 import com.fa26se088.filmlink.entity.payment.Payment;
+import com.fa26se088.filmlink.entity.payment.enums.CommissionCollectionMode;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionDebtStatus;
 import com.fa26se088.filmlink.entity.payment.enums.CommissionStatus;
 import com.fa26se088.filmlink.entity.payment.enums.PaymentConfirmationStatus;
@@ -26,6 +28,7 @@ import com.fa26se088.filmlink.repository.payment.PaymentRepository;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
 import com.fa26se088.filmlink.service.lab.LabAccessService;
+import com.fa26se088.filmlink.service.masterdata.SystemParameterService;
 import com.fa26se088.filmlink.service.payment.CommissionDebtService;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -42,6 +45,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/** Thực thi chốt kỳ công nợ hoa hồng hằng tháng và đối soát nộp nợ của Film Lab (UC32, UC33). */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -56,6 +60,7 @@ public class CommissionDebtServiceImpl implements CommissionDebtService {
   private final CommissionDebtMapper debtMapper;
   private final LabAccessService labAccessService;
   private final AuditLogService auditLogService;
+  private final SystemParameterService systemParameterService;
   private final Clock clock;
 
   @Override
@@ -76,8 +81,12 @@ public class CommissionDebtServiceImpl implements CommissionDebtService {
     Instant threshold = nextMonthFirstDay.atStartOfDay(ZoneId.of("Asia/Ho_Chi_Minh")).toInstant();
 
     // Gom các dòng hoa hồng DEBT chưa chốt kỳ (OPEN, DEFERRED) tính đến hết tháng
-    List<Commission> unbilledCommissions = commissionRepository.findByFilmLabIdAndStatusInAndEligibleAtBefore(
-        labId, List.of(CommissionStatus.OPEN, CommissionStatus.DEFERRED), threshold);
+    List<Commission> unbilledCommissions =
+        commissionRepository.findByFilmLabIdAndCollectionModeAndStatusInAndEligibleAtBefore(
+            labId,
+            CommissionCollectionMode.DEBT,
+            List.of(CommissionStatus.OPEN, CommissionStatus.DEFERRED),
+            threshold);
 
     long totalDebtVnd = unbilledCommissions.stream()
         .mapToLong(Commission::getAmountVnd)
@@ -89,8 +98,14 @@ public class CommissionDebtServiceImpl implements CommissionDebtService {
       return null;
     }
 
-    // BR-20: Hạn thanh toán mặc định là ngày 10 tháng sau
-    LocalDate dueDate = nextMonthFirstDay.withDayOfMonth(10);
+    // BR-20: Hạn thanh toán đọc từ tham số hệ thống BILLING_DUE_DAY_OF_MONTH (mặc định ngày 10 tháng sau)
+    Integer configuredDueDay =
+        systemParameterService.getInteger(SystemParameterKey.BILLING_DUE_DAY_OF_MONTH);
+    int dueDay =
+        (configuredDueDay != null && configuredDueDay >= 1 && configuredDueDay <= 28)
+            ? configuredDueDay
+            : 10;
+    LocalDate dueDate = nextMonthFirstDay.withDayOfMonth(dueDay);
 
     CommissionDebt debt = new CommissionDebt();
     debt.setFilmLabId(labId);
@@ -122,6 +137,18 @@ public class CommissionDebtServiceImpl implements CommissionDebtService {
         labId, savedDebt.getId(), totalDebtVnd);
 
     return debtMapper.toResponse(savedDebt);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<Long> findLabIdsWithUnbilledCommissions(LocalDate period) {
+    LocalDate firstDay = period.withDayOfMonth(1);
+    Instant threshold =
+        firstDay.plusMonths(1).atStartOfDay(ZoneId.of("Asia/Ho_Chi_Minh")).toInstant();
+    return commissionRepository.findDistinctLabIdsWithUnbilledCommissions(
+        CommissionCollectionMode.DEBT,
+        List.of(CommissionStatus.OPEN, CommissionStatus.DEFERRED),
+        threshold);
   }
 
   @Override

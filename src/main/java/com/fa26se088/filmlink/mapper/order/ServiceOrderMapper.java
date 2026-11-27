@@ -7,6 +7,7 @@ import com.fa26se088.filmlink.dto.delivery.response.FilmHandoverResponse;
 import com.fa26se088.filmlink.dto.lab.response.FilmLabBriefResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmArchiveRollResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmArchiveRollSummaryResponse;
+import com.fa26se088.filmlink.dto.order.response.FilmRollDamagePhotoResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmRollResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.LabServiceOrderSummaryResponse;
@@ -17,8 +18,10 @@ import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.entity.order.FilmRoll;
+import com.fa26se088.filmlink.entity.order.FilmRollDamagePhoto;
 import com.fa26se088.filmlink.entity.order.ProcessingStageRecord;
 import com.fa26se088.filmlink.entity.order.ServiceOrder;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
@@ -56,9 +59,10 @@ public class ServiceOrderMapper {
   }
 
   /**
-   * UC22, UC23, UC69, UC26: chi tiết đơn cho chủ lab; {@code photographer} do service đọc qua
+   * UC22, UC23, UC69, UC24, UC26: chi tiết đơn cho chủ lab; {@code photographer} do service đọc qua
    * domain account, {@code handovers} đọc qua domain delivery, {@code stages} theo thứ tự thời
-   * gian, {@code scanStatuses} ({@code filmRollId →} tình trạng scan) đọc qua domain archive.
+   * gian, {@code scanStatuses} ({@code filmRollId →} tình trạng scan) đọc qua domain archive,
+   * {@code damagePhotosByRollId} đọc gộp từ {@code film_roll_damage_photos}.
    */
   public LabServiceOrderResponse toLabResponse(
       ServiceOrder order,
@@ -66,7 +70,8 @@ public class ServiceOrderMapper {
       OrderPhotographerResponse photographer,
       List<FilmHandoverResponse> handovers,
       List<ProcessingStageRecord> stages,
-      Map<Long, RollScanStatusResponse> scanStatuses) {
+      Map<Long, RollScanStatusResponse> scanStatuses,
+      Map<Long, List<FilmRollDamagePhotoResponse>> damagePhotosByRollId) {
     return new LabServiceOrderResponse(
         order.getId(),
         order.getOrderCode(),
@@ -92,11 +97,17 @@ public class ServiceOrderMapper {
         order.getDeliveredAt(),
         order.getClosedAt(),
         order.getCancelledAt(),
+        order.getRejectionReason(),
         order.getCancellationReason(),
         order.isKeepNegativesAtLab(),
         photographer,
         rolls.stream()
-            .map(roll -> toLabRollResponse(roll, scanStatuses.get(roll.getId())))
+            .map(
+                roll ->
+                    toLabRollResponse(
+                        roll,
+                        scanStatuses.get(roll.getId()),
+                        damagePhotosByRollId.getOrDefault(roll.getId(), List.of())))
             .toList(),
         handovers,
         stages.stream().map(this::toStageResponse).toList(),
@@ -141,6 +152,7 @@ public class ServiceOrderMapper {
    * domain delivery (bỏ người thực hiện phía lab), {@code stages} theo thứ tự thời gian (bỏ người
    * ghi).
    *
+   * @param damagePhotosByRollId {@code filmRollId →} danh sách ảnh bằng chứng cuộn hỏng (BR-26)
    * @param archiveRollIds {@code filmRollId → archiveRollId} của các cuộn đã giao scan (UC28);
    *     rỗng khi đơn chưa giao scan
    * @param payment thông tin thanh toán do service dựng (hiện luôn {@code null})
@@ -151,6 +163,7 @@ public class ServiceOrderMapper {
       List<FilmRoll> rolls,
       List<ProcessingStageRecord> stages,
       List<FilmHandoverResponse> handovers,
+      Map<Long, List<FilmRollDamagePhotoResponse>> damagePhotosByRollId,
       Map<Long, Long> archiveRollIds,
       Object payment) {
     return new ServiceOrderDetailResponse(
@@ -181,7 +194,14 @@ public class ServiceOrderMapper {
         order.getCancellationFeeVnd(),
         order.isKeepNegativesAtLab(),
         rolls.stream()
-            .map(roll -> toRollResponse(roll, archiveRollIds.get(roll.getId()), null, null))
+            .map(
+                roll ->
+                    toRollResponse(
+                        roll,
+                        damagePhotosByRollId.getOrDefault(roll.getId(), List.of()),
+                        archiveRollIds.get(roll.getId()),
+                        null,
+                        null))
             .toList(),
         stages.stream().map(this::toStageResponse).toList(),
         handovers.stream().map(this::toOrderHandoverResponse).toList(),
@@ -200,17 +220,31 @@ public class ServiceOrderMapper {
         handover.photos());
   }
 
-  /** BR-07: một mốc công đoạn. */
+  /** BR-07, UC24: một mốc công đoạn (kèm cờ {@code adminReversion}). */
   public ProcessingStageRecordResponse toStageResponse(ProcessingStageRecord record) {
     return new ProcessingStageRecordResponse(
-        record.getStage(), record.getRecordedAt(), record.getNote());
+        record.getStage(), record.getRecordedAt(), record.getNote(), record.isAdminReversion());
+  }
+
+  /** BR-26: một ảnh bằng chứng cuộn phim hỏng kèm URL ký có hạn. */
+  public FilmRollDamagePhotoResponse toDamagePhotoResponse(
+      FilmRollDamagePhoto photo, URI signedUrl) {
+    return new FilmRollDamagePhotoResponse(photo.getId(), signedUrl, photo.getCreatedAt());
   }
 
   /** UC26: cuộn kèm số ảnh xem trước và link file gốc cho chủ lab ({@code scan} có thể null). */
   public FilmRollResponse toLabRollResponse(FilmRoll roll, RollScanStatusResponse scan) {
+    return toLabRollResponse(roll, scan, List.of());
+  }
+
+  /** UC24, UC26: cuộn cho chủ lab kèm trạng thái scan và ảnh bằng chứng cuộn hỏng (nếu có). */
+  public FilmRollResponse toLabRollResponse(
+      FilmRoll roll,
+      RollScanStatusResponse scan,
+      List<FilmRollDamagePhotoResponse> damagePhotos) {
     return scan == null
-        ? toRollResponse(roll, null, 0L, null)
-        : toRollResponse(roll, null, scan.previewCount(), scan.fullResolutionLink());
+        ? toRollResponse(roll, damagePhotos, null, 0L, null)
+        : toRollResponse(roll, damagePhotos, null, scan.previewCount(), scan.fullResolutionLink());
   }
 
   /**
@@ -275,11 +309,15 @@ public class ServiceOrderMapper {
   }
 
   public FilmRollResponse toRollResponse(FilmRoll roll) {
-    return toRollResponse(roll, null, null, null);
+    return toRollResponse(roll, List.of(), null, null, null);
   }
 
   private FilmRollResponse toRollResponse(
-      FilmRoll roll, Long archiveRollId, Long previewScanCount, String fullResolutionLink) {
+      FilmRoll roll,
+      List<FilmRollDamagePhotoResponse> damagePhotos,
+      Long archiveRollId,
+      Long previewScanCount,
+      String fullResolutionLink) {
     return new FilmRollResponse(
         roll.getId(),
         roll.getRollSequence(),
@@ -297,6 +335,8 @@ public class ServiceOrderMapper {
         roll.getPushPullSurchargeVnd(),
         roll.getExpressSurchargeVnd(),
         roll.getStatus(),
+        roll.getDamageNote(),
+        damagePhotos == null ? List.of() : damagePhotos,
         archiveRollId,
         previewScanCount,
         fullResolutionLink);

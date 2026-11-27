@@ -74,6 +74,12 @@ filmlink:
     # Chạy lúc 2:00 AM giờ VN mỗi ngày (giờ thấp điểm, tránh tranh chấp tải).
     account-purge-unverified:
       cron: "0 0 2 * * *"
+    # UC32 / PAY-05: chốt kỳ nợ hoa hồng tháng trước vào 00:15 ngày 1 hàng tháng (giờ VN).
+    commission-debt-generation:
+      cron: "0 15 0 1 * *"
+    # UC35 / BR-46: 01:30 mỗi ngày gom hoa hồng ONLINE đã qua thời gian re-scan thành payout.
+    payout-generation:
+      cron: "0 30 1 * * *"
 
 spring:
   config:
@@ -118,6 +124,7 @@ spring:
         default_schema: ${filmlink.db.schema}
   flyway:
     enabled: true
+    out-of-order: true
     # Flyway tự tạo schema nếu chưa có; flyway_schema_history nằm trong default-schema.
     default-schema: ${filmlink.db.schema}
     schemas: ${filmlink.db.schema}

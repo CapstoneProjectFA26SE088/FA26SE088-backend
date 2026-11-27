@@ -4,6 +4,7 @@ import com.fa26se088.filmlink.dto.payment.request.ReportDebtPaymentRequest;
 import com.fa26se088.filmlink.dto.payment.response.CommissionDebtResponse;
 import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import java.time.LocalDate;
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -21,6 +22,12 @@ public interface CommissionDebtService {
    * @return CommissionDebtResponse nếu có nợ, hoặc null nếu không phát sinh nợ
    */
   CommissionDebtResponse generateMonthlyDebt(Long labId, LocalDate period);
+
+  /**
+   * Tìm danh sách ID các Film Lab có hoa hồng chưa chốt kỳ ({@code OPEN}, {@code DEFERRED}) tính
+   * đến hết kỳ {@code period} (UC32).
+   */
+  List<Long> findLabIdsWithUnbilledCommissions(LocalDate period);
 
   /**
    * Film Lab báo cáo đã nộp nợ hoa hồng kèm ảnh biên lai (UC33).
