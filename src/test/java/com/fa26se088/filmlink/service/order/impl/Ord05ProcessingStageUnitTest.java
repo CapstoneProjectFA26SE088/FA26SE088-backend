@@ -165,6 +165,7 @@ class Ord05ProcessingStageUnitTest {
             archiveService,
             storageClient,
             commissionService,
+            paymentService,
             clock);
   }
 

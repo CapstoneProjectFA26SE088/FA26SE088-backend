@@ -155,6 +155,7 @@ class CancelServiceOrderIntegrationTest {
                 "ALTER TABLE processing_stage_records"
                     + " ENABLE TRIGGER processing_stage_records_append_only");
           });
+      jdbcTemplate.update("DELETE FROM payments WHERE service_order_id IN (" + orderIds + ")");
       jdbcTemplate.update("DELETE FROM film_rolls WHERE service_order_id IN (" + orderIds + ")");
       jdbcTemplate.update("DELETE FROM service_orders WHERE film_lab_id = ?", id);
     }

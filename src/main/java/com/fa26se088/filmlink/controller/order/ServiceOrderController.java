@@ -14,6 +14,7 @@ import com.fa26se088.filmlink.security.AuthenticatedAccount;
 import com.fa26se088.filmlink.service.order.ServiceOrderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
@@ -62,8 +63,8 @@ public class ServiceOrderController {
   @Operation(
       summary = "Chi tiết đơn của tôi: lab, cuộn, dòng thời gian công đoạn, bàn giao (UC25)",
       description =
-          "Đơn không tồn tại hoặc của người khác → 404 ORDER_NOT_FOUND. Trường payment hiện luôn"
-              + " null (chờ contract thanh toán).")
+          "Đơn không tồn tại hoặc của người khác → 404 ORDER_NOT_FOUND. Trường payment chứa tóm"
+              + " tắt thanh toán nếu đơn có giao dịch trực tuyến.")
   public ServiceOrderDetailResponse getMyOrder(
       @AuthenticationPrincipal AuthenticatedAccount account, @PathVariable Long id) {
     return serviceOrderService.getMyOrder(account.id(), id);
@@ -81,12 +82,14 @@ public class ServiceOrderController {
   @Operation(
       summary = "Tạo đơn (201); gửi lại cùng idempotencyKey thì trả đơn đã có (200)",
       description =
-          "ONLINE → AWAITING_PAYMENT; PAY_AT_LAB → AWAITING_LAB_CONFIRMATION. Trường payment hiện"
-              + " luôn null (chờ contract thanh toán).")
+          "ONLINE → AWAITING_PAYMENT kèm link thanh toán VNPay trong trường payment; PAY_AT_LAB →"
+              + " AWAITING_LAB_CONFIRMATION (payment = null).")
   public ResponseEntity<ServiceOrderResponse> create(
       @AuthenticationPrincipal AuthenticatedAccount account,
-      @Valid @RequestBody CreateServiceOrderRequest request) {
-    ServiceOrderCreationResult result = serviceOrderService.create(account.id(), request);
+      @Valid @RequestBody CreateServiceOrderRequest request,
+      HttpServletRequest httpRequest) {
+    ServiceOrderCreationResult result =
+        serviceOrderService.create(account.id(), request, httpRequest.getRemoteAddr());
     return ResponseEntity.status(result.created() ? HttpStatus.CREATED : HttpStatus.OK)
         .body(result.order());
   }

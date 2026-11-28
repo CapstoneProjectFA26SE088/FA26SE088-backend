@@ -120,10 +120,9 @@ class LabServiceOrderControllerIntegrationTest {
   @AfterEach
   void cleanUp() {
     for (Long id : labIds) {
-      jdbcTemplate.update(
-          "DELETE FROM film_rolls WHERE service_order_id IN"
-              + " (SELECT id FROM service_orders WHERE film_lab_id = ?)",
-          id);
+      String orderIds = "SELECT id FROM service_orders WHERE film_lab_id = " + id;
+      jdbcTemplate.update("DELETE FROM payments WHERE service_order_id IN (" + orderIds + ")");
+      jdbcTemplate.update("DELETE FROM film_rolls WHERE service_order_id IN (" + orderIds + ")");
       jdbcTemplate.update("DELETE FROM service_orders WHERE film_lab_id = ?", id);
     }
     labIds.clear();

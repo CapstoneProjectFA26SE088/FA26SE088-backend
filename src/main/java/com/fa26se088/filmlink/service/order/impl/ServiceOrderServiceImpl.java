@@ -17,9 +17,6 @@ import com.fa26se088.filmlink.dto.order.request.CreateServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.request.FilmRollRequest;
 import com.fa26se088.filmlink.dto.order.request.SearchServiceOrderRequest;
 import com.fa26se088.filmlink.dto.order.response.FilmRollDamagePhotoResponse;
-import com.fa26se088.filmlink.dto.payment.ClosedOrderCommission;
-import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
-import com.fa26se088.filmlink.dto.order.response.ServiceOrderSummaryResponse;
 import com.fa26se088.filmlink.dto.order.response.FilmRollQuoteResponse;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderCreationResult;
 import com.fa26se088.filmlink.dto.order.response.ServiceOrderDetailResponse;
@@ -40,6 +37,7 @@ import com.fa26se088.filmlink.entity.order.enums.FilmHandoverMethod;
 import com.fa26se088.filmlink.entity.order.enums.FilmRollStatus;
 import com.fa26se088.filmlink.entity.order.enums.PaymentMethod;
 import com.fa26se088.filmlink.entity.order.enums.ServiceOrderStatus;
+import com.fa26se088.filmlink.entity.payment.enums.PaymentPurpose;
 import com.fa26se088.filmlink.exception.BusinessException;
 import com.fa26se088.filmlink.exception.ErrorCode;
 import com.fa26se088.filmlink.exception.GlobalExceptionHandler.FieldViolation;
@@ -51,7 +49,6 @@ import com.fa26se088.filmlink.repository.order.ProcessingStageRecordRepository;
 import com.fa26se088.filmlink.repository.order.ServiceOrderRepository;
 import com.fa26se088.filmlink.service.archive.ArchiveService;
 import com.fa26se088.filmlink.service.audit.AuditLogService;
-import com.fa26se088.filmlink.service.payment.CommissionService;
 import com.fa26se088.filmlink.service.delivery.FilmHandoverService;
 import com.fa26se088.filmlink.service.lab.FilmLabService;
 import com.fa26se088.filmlink.service.machine.ScheduleChangeService;
@@ -62,6 +59,8 @@ import com.fa26se088.filmlink.service.notification.event.NotificationEvent;
 import com.fa26se088.filmlink.service.order.DigitalFilmArchiveService;
 import com.fa26se088.filmlink.service.order.ServiceOrderService;
 import com.fa26se088.filmlink.service.payment.CommissionService;
+import com.fa26se088.filmlink.service.payment.PaymentService;
+import com.fa26se088.filmlink.service.payment.event.PaymentSucceededEvent;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -151,6 +150,7 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
   private final ArchiveService archiveService;
   private final StorageClient storageClient;
   private final CommissionService commissionService;
+  private final PaymentService paymentService;
   private final Clock clock;
 
   /**
@@ -213,14 +213,22 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
   @Transactional
   public ServiceOrderCreationResult create(
       Long photographerAccountId, CreateServiceOrderRequest request) {
+    return create(photographerAccountId, request, "127.0.0.1");
+  }
+
+  @Override
+  @Transactional
+  public ServiceOrderCreationResult create(
+      Long photographerAccountId, CreateServiceOrderRequest request, String clientIp) {
     if (request.idempotencyKey() == null) {
       throw fieldError("idempotencyKey", "Thiếu khoá idempotency (UUID) khi tạo đơn.");
     }
+    String safeClientIp = clientIp == null || clientIp.isBlank() ? "127.0.0.1" : clientIp;
     Optional<ServiceOrder> existing =
         serviceOrderRepository.findByPhotographerAccountIdAndIdempotencyKey(
             photographerAccountId, request.idempotencyKey());
     if (existing.isPresent()) {
-      return new ServiceOrderCreationResult(toResponse(existing.get()), false);
+      return new ServiceOrderCreationResult(toResponse(existing.get(), safeClientIp), false);
     }
 
     Instant now = clock.instant();
@@ -279,8 +287,14 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
       notifyLabOwner(pricing.lab(), order);
     }
 
-    // TODO(FA26-157): gọi PaymentService.createOrderPayment khi contract (SPEC-00 §4.5) lên dev
-    Object payment = null;
+    Object payment =
+        order.getPaymentMethod() == PaymentMethod.ONLINE
+            ? paymentService.createOrderPayment(
+                order.getId(),
+                photographerAccountId,
+                order.getEstimatedTotalVnd(),
+                safeClientIp)
+            : null;
     return new ServiceOrderCreationResult(
         serviceOrderMapper.toResponse(order, rolls, payment), true);
   }
@@ -734,9 +748,13 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
           "Đơn đã bị thay đổi bởi người khác. Vui lòng tải lại trang và thử lại.");
     }
 
-    // TODO(FA26-157): netPaid = PaymentService.netPaidForOrder(orderId); > 0 →
-    // createOrderRefund(orderId, netPaid, reason) (BR-38: hoàn 100%)
-    // TODO(FA26-157): đơn AWAITING_PAYMENT — huỷ payment PENDING (phía Phát)
+    if (before == ServiceOrderStatus.AWAITING_PAYMENT) {
+      paymentService.cancelPendingOrderPayments(order.getId(), reason);
+    }
+    long netPaid = paymentService.netPaidForOrder(order.getId());
+    if (netPaid > 0) {
+      paymentService.createOrderRefund(order.getId(), netPaid, reason);
+    }
     // TODO(P-09): đơn PICKUP ở AWAITING_FILM — huỷ shipment lấy phim nếu đã tạo (hiện chưa tạo)
 
     Map<String, Object> auditAfter = new LinkedHashMap<>();
@@ -794,8 +812,7 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
         filmLabService.getLabBriefs(List.of(order.getFilmLabId())).stream()
             .findFirst()
             .orElse(null);
-    // TODO(FA26-157): thông tin thanh toán của đơn khi contract PaymentService lên dev
-    Object payment = null;
+    Object payment = paymentService.getOrderPaymentSummary(order.getId(), "127.0.0.1");
     List<FilmRoll> rolls =
         filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId());
     return serviceOrderMapper.toDetailResponse(
@@ -929,6 +946,52 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
     notifyPhotographerPromisedDateChanged(order, event);
   }
 
+  /**
+   * UC30, BR-17 (SPEC-00 §4.5): khi khoản {@code ORDER_PAYMENT} thành công qua VNPay IPN, chuyển
+   * đơn {@code AWAITING_PAYMENT -> AWAITING_LAB_CONFIRMATION} trong cùng transaction, gán hạn phản
+   * hồi của lab và báo chủ lab.
+   */
+  @EventListener
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void onPaymentSucceeded(PaymentSucceededEvent event) {
+    if (event.purpose() != PaymentPurpose.ORDER_PAYMENT || event.serviceOrderId() == null) {
+      return;
+    }
+    Optional<ServiceOrder> found = serviceOrderRepository.findByIdForUpdate(event.serviceOrderId());
+    if (found.isEmpty()) {
+      log.warn(
+          "PaymentSucceededEvent for unknown service order {}, skipping", event.serviceOrderId());
+      return;
+    }
+    ServiceOrder order = found.get();
+    if (order.getStatus() != ServiceOrderStatus.AWAITING_PAYMENT) {
+      log.info(
+          "PaymentSucceededEvent for service order {} in status {}, skipping",
+          order.getId(),
+          order.getStatus());
+      return;
+    }
+
+    Instant now = clock.instant();
+    order.setStatus(ServiceOrderStatus.AWAITING_LAB_CONFIRMATION);
+    order.setLabResponseDueAt(now.plus(labResponseLimit()));
+    order = serviceOrderRepository.saveAndFlush(order);
+
+    Map<String, Object> auditAfter = new LinkedHashMap<>();
+    auditAfter.put("status", order.getStatus().name());
+    auditAfter.put("paymentId", event.paymentId());
+    auditAfter.put("amountVnd", event.amountVnd());
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.ORDER_PAID,
+            AuditTargetType.SERVICE_ORDER,
+            order.getId(),
+            null,
+            Map.of("status", ServiceOrderStatus.AWAITING_PAYMENT.name()),
+            auditAfter));
+    notifyLabOwner(filmLabService.getLabForOrdering(order.getFilmLabId()), order);
+  }
+
   /** UC71, UC04: báo Photographer ngày hẹn trả mới (gửi sau khi commit). */
   private void notifyPhotographerPromisedDateChanged(
       ServiceOrder order, PromisedDateChangedEvent event) {
@@ -992,10 +1055,18 @@ public class ServiceOrderServiceImpl implements ServiceOrderService {
     throw new IllegalStateException("Không sinh được mã đơn duy nhất sau nhiều lần thử.");
   }
 
-  private ServiceOrderResponse toResponse(ServiceOrder order) {
-    // TODO(FA26-157): trả lại link thanh toán còn hạn khi contract (SPEC-00 §4.5) lên dev
+  private ServiceOrderResponse toResponse(ServiceOrder order, String clientIp) {
+    Object payment =
+        order.getPaymentMethod() == PaymentMethod.ONLINE
+                && order.getStatus() == ServiceOrderStatus.AWAITING_PAYMENT
+            ? paymentService.createOrderPayment(
+                order.getId(),
+                order.getPhotographerAccountId(),
+                order.getEstimatedTotalVnd(),
+                clientIp)
+            : paymentService.getOrderPaymentSummary(order.getId(), clientIp);
     return serviceOrderMapper.toResponse(
-        order, filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId()), null);
+        order, filmRollRepository.findByServiceOrderIdOrderByRollSequenceAsc(order.getId()), payment);
   }
 
   private static String blankToNull(String value) {

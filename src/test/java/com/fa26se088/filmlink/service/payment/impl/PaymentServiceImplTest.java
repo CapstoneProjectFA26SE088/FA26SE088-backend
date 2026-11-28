@@ -548,7 +548,69 @@ class PaymentServiceImplTest {
     assertThat(response.success()).isTrue();
     assertThat(response.transactionCode()).isEqualTo("TXN123456789");
     assertThat(response.amountVnd()).isEqualTo(250_000L);
+    assertThat(response.paymentStatus()).isEqualTo(PaymentStatus.PENDING);
     verify(paymentRepository, never()).save(any());
+  }
+
+  @Test
+  @DisplayName("IPN trùng khoá uq_payment_gateway_events_dedup -> bỏ qua insert lặp, vẫn trả 02")
+  void processVnPayIpn_duplicateGatewayEvent_skipsInsertAndReturns02() {
+    Payment payment = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.SUCCEEDED);
+    when(paymentGatewayClient.provider()).thenReturn("vnpay");
+    when(paymentGatewayClient.verifySignature(any())).thenReturn(true);
+    when(paymentRepository.findByTransactionCodeForUpdate("TXN123456789"))
+        .thenReturn(Optional.of(payment));
+    when(paymentGatewayEventRepository.existsDuplicateEvent(any(), any(), any(), any(), any()))
+        .thenReturn(true);
+
+    VnPayIpnResponse response =
+        service.processVnPayIpn(
+            Map.of(
+                "vnp_TxnRef", "TXN123456789",
+                "vnp_Amount", "25000000",
+                "vnp_ResponseCode", "00",
+                "vnp_TransactionNo", "VNPGW999888"));
+
+    assertThat(response.rspCode()).isEqualTo("02");
+    verify(paymentGatewayEventRepository, never()).save(any());
+  }
+
+  @Test
+  @DisplayName("SPEC-02 P-02: ResponseCode=00 nhưng TransactionStatus!=00 -> Payment FAILED")
+  void processVnPayIpn_nonZeroTransactionStatus_marksFailed() {
+    Payment payment = createSamplePayment(10L, "TXN123456789", 250_000L, PaymentStatus.PENDING);
+    when(paymentGatewayClient.provider()).thenReturn("vnpay");
+    when(paymentGatewayClient.verifySignature(any())).thenReturn(true);
+    when(paymentRepository.findByTransactionCodeForUpdate("TXN123456789"))
+        .thenReturn(Optional.of(payment));
+    when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> i.getArgument(0));
+
+    VnPayIpnResponse response =
+        service.processVnPayIpn(
+            Map.of(
+                "vnp_TxnRef", "TXN123456789",
+                "vnp_Amount", "25000000",
+                "vnp_ResponseCode", "00",
+                "vnp_TransactionStatus", "02"));
+
+    assertThat(response.rspCode()).isEqualTo("00");
+    assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+    verify(eventPublisher, never()).publishEvent(any());
+  }
+
+  @Test
+  @DisplayName("UC60: cancelPendingOrderPayments chuyển các giao dịch PENDING sang CANCELLED")
+  void cancelPendingOrderPayments_cancelsOnlyPending() {
+    Payment pending = createSamplePayment(10L, "TXN_PENDING", 220_000L, PaymentStatus.PENDING);
+    Payment failed = createSamplePayment(11L, "TXN_FAILED", 220_000L, PaymentStatus.FAILED);
+    when(paymentRepository.findByServiceOrderId(1L)).thenReturn(List.of(pending, failed));
+    when(paymentRepository.save(any(Payment.class))).thenAnswer(i -> i.getArgument(0));
+
+    service.cancelPendingOrderPayments(1L, "Khách huỷ đơn");
+
+    assertThat(pending.getStatus()).isEqualTo(PaymentStatus.CANCELLED);
+    assertThat(failed.getStatus()).isEqualTo(PaymentStatus.FAILED);
+    verify(paymentRepository).save(pending);
   }
 
   // -------------------------------------------------------------------------

@@ -25,6 +25,12 @@ public interface ServiceOrderService {
    */
   ServiceOrderCreationResult create(Long photographerAccountId, CreateServiceOrderRequest request);
 
+  /** UC20, UC30: tạo đơn kèm IP người gọi để tạo link thanh toán VNPay cho đơn {@code ONLINE}. */
+  default ServiceOrderCreationResult create(
+      Long photographerAccountId, CreateServiceOrderRequest request, String clientIp) {
+    return create(photographerAccountId, request);
+  }
+
   /**
    * UC72: Photographer trả lời thay đổi lịch do sự cố máy của đơn mình. Giai đoạn này chỉ {@code
    * WAIT}.
