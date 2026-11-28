@@ -43,6 +43,15 @@ public enum AuditTargetType {
   PAYOUT,
   PAYOUT_ACCOUNT,
 
+  // --- marketplace (consignment WF-05) ---
+  CONSIGNMENT_LAB_SETTINGS,
+  CONSIGNMENT_BOOKING,
+  CONSIGNMENT_ITEM,
+  CONDITION_REPORT,
+  PRICE_OFFER,
+  CONSIGNMENT_LISTING,
+  CONSIGNMENT_SALE,
+
   // --- ai ---
   /** Knowledge Base Entry (ERD #46): chunk của Expert Article đã duyệt (BR-29). */
   KNOWLEDGE_BASE_ENTRY

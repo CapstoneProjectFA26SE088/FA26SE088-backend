@@ -2,6 +2,7 @@ package com.fa26se088.filmlink.service.payment.impl;
 
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
 import com.fa26se088.filmlink.dto.payment.ClosedOrderCommission;
+import com.fa26se088.filmlink.dto.payment.CompletedSaleCommission;
 import com.fa26se088.filmlink.dto.payment.response.CommissionResponse;
 import com.fa26se088.filmlink.entity.account.enums.UserAccountRole;
 import com.fa26se088.filmlink.entity.audit.enums.AuditAction;
@@ -140,6 +141,41 @@ public class CommissionServiceImpl implements CommissionService {
         orderId,
         commissionAmount,
         mode);
+  }
+
+  @Override
+  @Transactional
+  public void recordForCompletedSale(CompletedSaleCommission command) {
+    Long saleId = command.consignmentSaleId();
+    if (commissionRepository.existsByConsignmentSaleIdAndKind(saleId, CommissionKind.SALE)) {
+      log.info("[CommissionService] Idempotent hit: Giao dịch ký gửi #{} đã có hoa hồng", saleId);
+      return;
+    }
+
+    Commission commission = new Commission();
+    commission.setKind(CommissionKind.SALE);
+    commission.setFilmLabId(command.filmLabId());
+    commission.setConsignmentSaleId(saleId);
+    commission.setBaseAmountVnd(Math.max(0, command.itemPriceVnd()));
+    commission.setRatePercent(command.commissionRate());
+    commission.setAmountVnd(Math.max(0, command.commissionVnd()));
+    commission.setCollectionMode(CommissionCollectionMode.DEDUCTED);
+    commission.setStatus(CommissionStatus.SETTLED);
+    commission.setEligibleAt(
+        command.returnWindowEndsAt() != null ? command.returnWindowEndsAt() : clock.instant());
+
+    Commission saved = commissionRepository.save(commission);
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.COMMISSION_RECORDED,
+            AuditTargetType.COMMISSION,
+            saved.getId(),
+            "Ghi nhận hoa hồng ký gửi "
+                + saved.getAmountVnd()
+                + " VND cho giao dịch #"
+                + saleId,
+            null,
+            null));
   }
 
   @Override

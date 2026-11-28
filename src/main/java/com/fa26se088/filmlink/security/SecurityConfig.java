@@ -60,6 +60,9 @@ public class SecurityConfig {
     "/api/v1/public/lab-applications/**",
     "/api/v1/public/film-labs",
     "/api/v1/public/film-labs/*",
+    "/api/v1/public/film-labs/*/consignment-slots",
+    "/api/v1/public/consignment-listings",
+    "/api/v1/public/consignment-listings/*",
     // UC30: VNPay gọi IPN bằng GET; trình duyệt quay về return URL sau khi thanh toán
     "/api/v1/payments/vnpay/ipn",
     "/api/v1/payments/vnpay/return"

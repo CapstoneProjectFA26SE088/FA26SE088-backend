@@ -22,6 +22,8 @@ public interface CommissionRepository extends JpaRepository<Commission, Long> {
 
   boolean existsByServiceOrderIdAndKind(Long serviceOrderId, CommissionKind kind);
 
+  boolean existsByConsignmentSaleIdAndKind(Long consignmentSaleId, CommissionKind kind);
+
   Page<Commission> findByFilmLabId(Long filmLabId, Pageable pageable);
 
   List<Commission> findByFilmLabIdAndCollectionModeAndStatusInAndEligibleAtBefore(

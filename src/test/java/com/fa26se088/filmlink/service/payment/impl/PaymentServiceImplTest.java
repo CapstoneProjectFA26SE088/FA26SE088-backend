@@ -331,10 +331,43 @@ class PaymentServiceImplTest {
   }
 
   @Test
-  @DisplayName("createSalePayment chưa làm (P-07) -> UnsupportedOperationException")
-  void createSalePayment_notYetImplemented() {
-    assertThatThrownBy(() -> service.createSalePayment(1L, 100L, 100_000L, "127.0.0.1"))
-        .isInstanceOf(UnsupportedOperationException.class);
+  @DisplayName("UC62: createSalePayment tạo payment SALE_PAYMENT (PENDING, IN, VNPAY) cho giao dịch ký gửi")
+  void createSalePayment_createsPendingSalePaymentAndUrl() {
+    when(paymentGatewayClient.isConfigured()).thenReturn(true);
+    when(systemParameterService.getInteger(SystemParameterKey.PAYMENT_LINK_TTL_MINUTES))
+        .thenReturn(15);
+    when(paymentRepository.findReusableSalePending(
+            eq(88L),
+            eq(PaymentPurpose.SALE_PAYMENT),
+            eq(PaymentStatus.PENDING),
+            eq(3_000_000L),
+            eq(FIXED_NOW)))
+        .thenReturn(Optional.empty());
+    when(paymentGatewayClient.buildPaymentUrl(
+            anyString(), eq(3_000_000L), anyString(), any(), anyString(), anyString()))
+        .thenReturn(PAY_URL + "?sale=88");
+    when(paymentRepository.save(any(Payment.class)))
+        .thenAnswer(
+            i -> {
+              Payment p = i.getArgument(0);
+              ReflectionTestUtils.setField(p, "id", 880L);
+              return p;
+            });
+
+    PaymentLink link = service.createSalePayment(88L, 100L, 3_000_000L, "127.0.0.1");
+
+    ArgumentCaptor<Payment> captor = ArgumentCaptor.forClass(Payment.class);
+    verify(paymentRepository).save(captor.capture());
+    Payment saved = captor.getValue();
+    assertThat(saved.getPurpose()).isEqualTo(PaymentPurpose.SALE_PAYMENT);
+    assertThat(saved.getDirection()).isEqualTo(PaymentDirection.IN);
+    assertThat(saved.getMethod()).isEqualTo(PaymentMethod.VNPAY);
+    assertThat(saved.getStatus()).isEqualTo(PaymentStatus.PENDING);
+    assertThat(saved.getConsignmentSaleId()).isEqualTo(88L);
+    assertThat(saved.getServiceOrderId()).isNull();
+    assertThat(saved.getCounterpartyAccountId()).isEqualTo(100L);
+    assertThat(link.paymentId()).isEqualTo(880L);
+    assertThat(link.paymentUrl()).startsWith(PAY_URL);
   }
 
   @Test

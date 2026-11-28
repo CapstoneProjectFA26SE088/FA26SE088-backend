@@ -20,6 +20,20 @@ public interface PayoutService {
    */
   int generateDuePayouts();
 
+  /**
+   * UC64, BR-54: tạo đợt chi trả {@code PENDING} cho người bán ký gửi sau khi hết hạn đổi trả.
+   * Idempotent theo {@code consignmentSaleId}.
+   */
+  boolean createSellerPayoutIfAbsent(
+      Long sellerAccountId, Long consignmentSaleId, long amountVnd);
+
+  /** Tài khoản ngân hàng nhận tiền cá nhân của người bán ký gửi (UC64). */
+  PayoutAccountResponse getMyPersonalPayoutAccount(AuthenticatedAccount account);
+
+  /** Khai báo hoặc cập nhật tài khoản ngân hàng nhận tiền cá nhân (UC64). */
+  PayoutAccountResponse updateMyPersonalPayoutAccount(
+      UpdatePayoutAccountRequest request, AuthenticatedAccount account);
+
   /** UC35, BR-31: Admin ghi nhận đã chuyển khoản kèm biên lai, đợt chi trả sang {@code PAID}. */
   PayoutResponse markPaid(Long payoutId, MultipartFile receipt, AuthenticatedAccount adminAccount);
 

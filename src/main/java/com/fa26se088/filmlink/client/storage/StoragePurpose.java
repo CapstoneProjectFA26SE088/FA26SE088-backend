@@ -39,7 +39,13 @@ public enum StoragePurpose {
 
   /** Ảnh bằng chứng cuộn phim hỏng (UC24, BR-26): JPG/PNG, tối đa 10 MB mỗi file. */
   DAMAGE_PHOTO(
-      "damage-photo", 10 * StoragePurpose.MB, Set.of(StorageFileType.JPEG, StorageFileType.PNG));
+      "damage-photo", 10 * StoragePurpose.MB, Set.of(StorageFileType.JPEG, StorageFileType.PNG)),
+
+  /** Ảnh kiểm định và bàn giao thiết bị ký gửi (UC46, UC63): JPG/PNG, tối đa 10 MB mỗi file. */
+  CONSIGNMENT_PHOTO(
+      "consignment-photo",
+      10 * StoragePurpose.MB,
+      Set.of(StorageFileType.JPEG, StorageFileType.PNG));
 
   private static final long MB = 1024L * 1024L;
 

@@ -119,6 +119,89 @@ public class PayoutServiceImpl implements PayoutService {
     return created;
   }
 
+  @Override
+  @Transactional
+  public boolean createSellerPayoutIfAbsent(
+      Long sellerAccountId, Long consignmentSaleId, long amountVnd) {
+    if (amountVnd <= 0 || payoutItemRepository.existsByConsignmentSaleId(consignmentSaleId)) {
+      return false;
+    }
+
+    Payout payout = new Payout();
+    payout.setPayoutCode("PO" + generateCode(10));
+    payout.setRecipientType(PayoutRecipientType.SELLER);
+    payout.setRecipientAccountId(sellerAccountId);
+    payout.setAmountVnd(amountVnd);
+    payout.setStatus(PayoutStatus.PENDING);
+    copyBankDetails(payout);
+    Payout saved = payoutRepository.save(payout);
+
+    PayoutItem item = new PayoutItem();
+    item.setPayout(saved);
+    item.setConsignmentSaleId(consignmentSaleId);
+    item.setAmountVnd(amountVnd);
+    payoutItemRepository.save(item);
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.PAYOUT_CREATED,
+            AuditTargetType.PAYOUT,
+            saved.getId(),
+            "Tạo payout người bán "
+                + saved.getPayoutCode()
+                + " cho giao dịch ký gửi #"
+                + consignmentSaleId
+                + ": "
+                + amountVnd
+                + " VND",
+            null,
+            Map.of("status", saved.getStatus().name(), "amountVnd", amountVnd)));
+    return true;
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public PayoutAccountResponse getMyPersonalPayoutAccount(AuthenticatedAccount account) {
+    PayoutAccount payoutAccount =
+        payoutAccountRepository
+            .findByUserAccountId(account.id())
+            .orElseThrow(
+                () ->
+                    new BusinessException(
+                        ErrorCode.PAYOUT_ACCOUNT_NOT_FOUND,
+                        "Chưa khai báo tài khoản ngân hàng nhận tiền."));
+    return payoutAccountMapper.toResponse(payoutAccount);
+  }
+
+  @Override
+  @Transactional
+  public PayoutAccountResponse updateMyPersonalPayoutAccount(
+      UpdatePayoutAccountRequest request, AuthenticatedAccount account) {
+    PayoutAccount payoutAccount =
+        payoutAccountRepository
+            .findByUserAccountId(account.id())
+            .orElseGet(
+                () -> {
+                  PayoutAccount created = new PayoutAccount();
+                  created.setUserAccountId(account.id());
+                  return created;
+                });
+    payoutAccount.setBankName(request.bankName().trim());
+    payoutAccount.setBankAccountNumber(request.bankAccountNumber());
+    payoutAccount.setAccountHolderName(request.accountHolderName().trim());
+    PayoutAccount saved = payoutAccountRepository.save(payoutAccount);
+
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.PAYOUT_ACCOUNT_UPDATED,
+            AuditTargetType.PAYOUT_ACCOUNT,
+            saved.getId(),
+            "Tài khoản #" + account.id() + " cập nhật tài khoản ngân hàng nhận tiền",
+            null,
+            Map.of("bankName", saved.getBankName())));
+    return payoutAccountMapper.toResponse(saved);
+  }
+
   /**
    * UC35, BR-31: biên lai chuyển khoản bắt buộc; thông tin ngân hàng được sao chép vào bản ghi
    * {@code payouts} để việc đổi tài khoản nhận tiền về sau không làm thay đổi lịch sử giải ngân.
@@ -257,10 +340,17 @@ public class PayoutServiceImpl implements PayoutService {
                     new BusinessException(
                         ErrorCode.PAYOUT_NOT_FOUND, "Không tìm thấy đợt chi trả."));
     if (account.role() != UserAccountRole.ADMIN) {
-      FilmLab lab = labAccessService.requireOwnedLab(account.id());
-      if (!Objects.equals(payout.getFilmLabId(), lab.getId())) {
-        throw new BusinessException(
-            ErrorCode.LAB_ACCESS_DENIED, "Bạn không có quyền xem đợt chi trả này.");
+      if (payout.getRecipientType() == PayoutRecipientType.SELLER) {
+        if (!Objects.equals(payout.getRecipientAccountId(), account.id())) {
+          throw new BusinessException(
+              ErrorCode.ACCESS_DENIED, "Bạn không có quyền xem đợt chi trả này.");
+        }
+      } else {
+        FilmLab lab = labAccessService.requireOwnedLab(account.id());
+        if (!Objects.equals(payout.getFilmLabId(), lab.getId())) {
+          throw new BusinessException(
+              ErrorCode.LAB_ACCESS_DENIED, "Bạn không có quyền xem đợt chi trả này.");
+        }
       }
     }
     return payoutMapper.toResponse(payout, payoutItemRepository.findByPayoutId(payout.getId()));
