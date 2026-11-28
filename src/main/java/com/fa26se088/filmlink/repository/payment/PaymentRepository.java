@@ -54,6 +54,25 @@ public interface PaymentRepository extends JpaRepository<Payment, Long> {
       @Param("amountVnd") Long amountVnd,
       @Param("now") Instant now);
 
+  /** Giao dịch SALE_PAYMENT PENDING còn hạn của cùng giao dịch ký gửi — để trả lại link cũ (UC62). */
+  @Query(
+      """
+      SELECT p FROM Payment p
+      WHERE p.consignmentSaleId = :consignmentSaleId
+        AND p.purpose = :purpose
+        AND p.status = :status
+        AND p.amountVnd = :amountVnd
+        AND p.paymentUrlExpiresAt > :now
+      ORDER BY p.createdAt DESC
+      LIMIT 1
+      """)
+  Optional<Payment> findReusableSalePending(
+      @Param("consignmentSaleId") Long consignmentSaleId,
+      @Param("purpose") PaymentPurpose purpose,
+      @Param("status") PaymentStatus status,
+      @Param("amountVnd") Long amountVnd,
+      @Param("now") Instant now);
+
   Page<Payment> findByCounterpartyAccountId(Long accountId, Pageable pageable);
 
   List<Payment> findByStatusAndPaymentUrlExpiresAtBefore(PaymentStatus status, Instant threshold);

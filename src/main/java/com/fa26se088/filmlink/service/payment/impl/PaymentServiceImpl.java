@@ -98,11 +98,86 @@ public class PaymentServiceImpl implements PaymentService {
         "Thanh toan bo sung don hang FilmLink #" + serviceOrderId);
   }
 
-  /** UC62: thanh toán mua hàng ký gửi — làm ở P-07. */
+  /** UC62: tạo link thanh toán trực tuyến cho giao dịch mua thiết bị ký gửi (SALE_PAYMENT). */
   @Override
+  @Transactional
   public PaymentLink createSalePayment(
       Long consignmentSaleId, Long buyerAccountId, long amountVnd, String clientIp) {
-    throw new UnsupportedOperationException("TODO P-07: createSalePayment (UC62) chưa làm");
+    if (consignmentSaleId == null || buyerAccountId == null) {
+      throw new BusinessException(
+          ErrorCode.VALIDATION_ERROR, "Thiếu mã giao dịch ký gửi hoặc tài khoản người mua.");
+    }
+    if (amountVnd <= 0) {
+      throw new BusinessException(
+          ErrorCode.PAYMENT_INVALID_STATE, "Số tiền thanh toán phải lớn hơn 0.");
+    }
+    if (!paymentGatewayClient.isConfigured()) {
+      throw new BusinessException(
+          ErrorCode.PAYMENT_GATEWAY_NOT_CONFIGURED,
+          "Cổng thanh toán chưa được cấu hình. Vui lòng liên hệ quản trị viên.");
+    }
+
+    Instant now = clock.instant();
+    String orderInfo = "Thanh toan mua thiet bi ky gui FilmLink #" + consignmentSaleId;
+    Optional<Payment> pending =
+        paymentRepository.findReusableSalePending(
+            consignmentSaleId,
+            PaymentPurpose.SALE_PAYMENT,
+            PaymentStatus.PENDING,
+            amountVnd,
+            now);
+    if (pending.isPresent()) {
+      Payment existing = pending.get();
+      String url =
+          paymentGatewayClient.buildPaymentUrl(
+              existing.getTransactionCode(),
+              existing.getAmountVnd(),
+              orderInfo,
+              null,
+              DEFAULT_LOCALE,
+              clientIp);
+      return new PaymentLink(
+          existing.getId(), existing.getTransactionCode(), url, existing.getPaymentUrlExpiresAt());
+    }
+
+    String txnRef = generateTxnRef();
+    Integer configuredTtl =
+        systemParameterService.getInteger(SystemParameterKey.PAYMENT_LINK_TTL_MINUTES);
+    int ttlMinutes = configuredTtl != null ? configuredTtl : 15;
+    Instant expiresAt = now.plus(Duration.ofMinutes(ttlMinutes));
+
+    Payment payment = new Payment();
+    payment.setTransactionCode(txnRef);
+    payment.setPurpose(PaymentPurpose.SALE_PAYMENT);
+    payment.setDirection(PaymentDirection.IN);
+    payment.setMethod(PaymentMethod.VNPAY);
+    payment.setStatus(PaymentStatus.PENDING);
+    payment.setAmountVnd(amountVnd);
+    payment.setConsignmentSaleId(consignmentSaleId);
+    payment.setCounterpartyAccountId(buyerAccountId);
+    payment.setPaymentUrlExpiresAt(expiresAt);
+    payment.setConfirmationStatus(PaymentConfirmationStatus.NOT_REQUIRED);
+
+    Payment saved = paymentRepository.save(payment);
+    auditLogService.recordSuccess(
+        new AuditEntry(
+            AuditAction.PAYMENT_CREATED,
+            AuditTargetType.PAYMENT,
+            saved.getId(),
+            "Tạo lượt thanh toán SALE_PAYMENT "
+                + txnRef
+                + " cho giao dịch ký gửi #"
+                + consignmentSaleId
+                + " số tiền "
+                + amountVnd
+                + " VND",
+            null,
+            null));
+
+    String paymentUrl =
+        paymentGatewayClient.buildPaymentUrl(
+            txnRef, amountVnd, orderInfo, null, DEFAULT_LOCALE, clientIp);
+    return new PaymentLink(saved.getId(), txnRef, paymentUrl, expiresAt);
   }
 
   /** Tổng SUCCEEDED chiều IN trừ tổng SUCCEEDED chiều OUT của đơn. */

@@ -15,4 +15,6 @@ public interface PayoutItemRepository extends JpaRepository<PayoutItem, Long> {
   List<PayoutItem> findByPayoutIdIn(Collection<Long> payoutIds);
 
   boolean existsByServiceOrderId(Long serviceOrderId);
+
+  boolean existsByConsignmentSaleId(Long consignmentSaleId);
 }
