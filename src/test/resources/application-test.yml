@@ -3,6 +3,8 @@ filmlink:
   db:
     schema: ${DB_TEST_SCHEMA:filmlink_test}
   # File test ghi vào thư mục tạm, không đụng STORAGE_LOCAL_ROOT của máy dev.
+  payment:
+    provider: mock
   storage:
     provider: local
     local:

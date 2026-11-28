@@ -1,6 +1,7 @@
 package com.fa26se088.filmlink.controller.payment;
 
 import com.fa26se088.filmlink.dto.payment.request.CreateVnPayPaymentUrlRequest;
+import com.fa26se088.filmlink.dto.payment.response.PaymentLink;
 import com.fa26se088.filmlink.dto.payment.response.PaymentResponse;
 import com.fa26se088.filmlink.dto.payment.response.PaymentReturnResponse;
 import com.fa26se088.filmlink.dto.payment.response.VnPayIpnResponse;
@@ -84,6 +85,20 @@ public class PaymentController {
   public List<PaymentResponse> getPaymentsByOrderId(
       @PathVariable Long serviceOrderId, @AuthenticationPrincipal AuthenticatedAccount account) {
     return paymentService.getPaymentsByOrderId(serviceOrderId, account);
+  }
+
+  @PostMapping("/by-order/{serviceOrderId}/payment-url")
+  @Operation(
+      summary = "Lấy lại hoặc tạo mới link thanh toán VNPay cho đơn hàng trực tuyến (UC30)",
+      description =
+          "Trả lại link PENDING còn hạn 15 phút, hoặc sinh lượt thanh toán mới nếu lượt trước hết"
+              + " hạn / thất bại.")
+  public PaymentLink recreateOrderPaymentUrl(
+      @PathVariable Long serviceOrderId,
+      @AuthenticationPrincipal AuthenticatedAccount account,
+      HttpServletRequest httpRequest) {
+    return paymentService.recreateOrderPaymentLink(
+        serviceOrderId, account, httpRequest.getRemoteAddr());
   }
 
   @PostMapping("/vnpay/sandbox-url")

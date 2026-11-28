@@ -1,6 +1,7 @@
 package com.fa26se088.filmlink.service.payment;
 
 import com.fa26se088.filmlink.dto.payment.request.CreateVnPayPaymentUrlRequest;
+import com.fa26se088.filmlink.dto.payment.response.OrderPaymentSummaryResponse;
 import com.fa26se088.filmlink.dto.payment.response.PaymentLink;
 import com.fa26se088.filmlink.dto.payment.response.PaymentResponse;
 import com.fa26se088.filmlink.dto.payment.response.PaymentReturnResponse;
@@ -35,6 +36,16 @@ public interface PaymentService {
 
   /** Sum of SUCCEEDED payments IN minus OUT for the order. */
   long netPaidForOrder(Long serviceOrderId);
+
+  /** Tóm tắt thanh toán mới nhất của đơn dịch vụ (trả {@code null} nếu đơn chưa có giao dịch). */
+  OrderPaymentSummaryResponse getOrderPaymentSummary(Long serviceOrderId, String clientIp);
+
+  /** UC60: huỷ các giao dịch {@code PENDING} của đơn khi khách huỷ đơn {@code AWAITING_PAYMENT}. */
+  void cancelPendingOrderPayments(Long serviceOrderId, String reason);
+
+  /** UC30: tạo lại hoặc lấy lại link thanh toán VNPay cho đơn đang chờ thanh toán trực tuyến. */
+  PaymentLink recreateOrderPaymentLink(
+      Long serviceOrderId, AuthenticatedAccount currentAccount, String clientIp);
 
   /**
    * Xử lý IPN (server-to-server) từ VNPay (UC30). Idempotent: IPN lặp lại không đổi trạng thái

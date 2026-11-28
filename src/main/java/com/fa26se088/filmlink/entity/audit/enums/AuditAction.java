@@ -133,11 +133,15 @@ public enum AuditAction {
    */
   ORDER_ROLL_DAMAGED,
 
+  /** UC30, BR-17: Thanh toán trực tuyến thành công, đơn chuyển sang chờ Lab xác nhận. */
+  ORDER_PAID,
+
   // --- payment ---
   PAYMENT_CREATED,
   PAYMENT_SUCCEEDED,
   PAYMENT_FAILED,
   PAYMENT_REFUNDED,
+  PAYMENT_CANCELLED,
   COMMISSION_RECORDED,
   COMMISSION_DEBT_CREATED,
   COMMISSION_DEBT_SETTLED,

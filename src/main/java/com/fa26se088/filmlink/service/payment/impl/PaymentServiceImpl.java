@@ -4,6 +4,7 @@ import com.fa26se088.filmlink.client.payment.PaymentGatewayClient;
 import com.fa26se088.filmlink.client.payment.VnPayClient;
 import com.fa26se088.filmlink.dto.audit.request.AuditEntry;
 import com.fa26se088.filmlink.dto.payment.request.CreateVnPayPaymentUrlRequest;
+import com.fa26se088.filmlink.dto.payment.response.OrderPaymentSummaryResponse;
 import com.fa26se088.filmlink.dto.payment.response.PaymentLink;
 import com.fa26se088.filmlink.dto.payment.response.PaymentResponse;
 import com.fa26se088.filmlink.dto.payment.response.PaymentReturnResponse;
@@ -119,6 +120,131 @@ public class PaymentServiceImpl implements PaymentService {
     return net;
   }
 
+  @Override
+  @Transactional(readOnly = true)
+  public OrderPaymentSummaryResponse getOrderPaymentSummary(Long serviceOrderId, String clientIp) {
+    List<Payment> payments =
+        paymentRepository.findByServiceOrderIdOrderByCreatedAtDesc(serviceOrderId);
+    if (payments.isEmpty()) {
+      return null;
+    }
+    long netPaid = 0;
+    for (Payment p : payments) {
+      if (p.getStatus() == PaymentStatus.SUCCEEDED) {
+        netPaid += p.getDirection() == PaymentDirection.IN ? p.getAmountVnd() : -p.getAmountVnd();
+      }
+    }
+    Payment latest =
+        payments.stream()
+            .filter(p -> p.getDirection() == PaymentDirection.IN)
+            .findFirst()
+            .orElse(payments.get(0));
+    String url = buildActivePendingUrl(latest, clientIp);
+    return new OrderPaymentSummaryResponse(
+        latest.getId(),
+        latest.getTransactionCode(),
+        latest.getPurpose(),
+        latest.getMethod(),
+        latest.getStatus(),
+        latest.getAmountVnd(),
+        netPaid,
+        url,
+        latest.getPaymentUrlExpiresAt(),
+        latest.getSucceededAt());
+  }
+
+  @Override
+  @Transactional
+  public void cancelPendingOrderPayments(Long serviceOrderId, String reason) {
+    List<Payment> payments = paymentRepository.findByServiceOrderId(serviceOrderId);
+    for (Payment p : payments) {
+      if (p.getStatus() != PaymentStatus.PENDING) {
+        continue;
+      }
+      p.setStatus(PaymentStatus.CANCELLED);
+      p.setFailureReason(reason);
+      Payment saved = paymentRepository.save(p);
+      auditLogService.recordSuccess(
+          new AuditEntry(
+              AuditAction.PAYMENT_CANCELLED,
+              AuditTargetType.PAYMENT,
+              saved.getId(),
+              "Huỷ lượt thanh toán PENDING "
+                  + saved.getTransactionCode()
+                  + " do huỷ đơn #"
+                  + serviceOrderId,
+              Map.of("status", PaymentStatus.PENDING.name()),
+              Map.of("status", saved.getStatus().name())));
+    }
+  }
+
+  @Override
+  @Transactional
+  public PaymentLink recreateOrderPaymentLink(
+      Long serviceOrderId, AuthenticatedAccount currentAccount, String clientIp) {
+    if (currentAccount == null) {
+      throw new BusinessException(
+          ErrorCode.AUTHENTICATION_REQUIRED, "Cần đăng nhập để tạo link thanh toán.");
+    }
+    List<Payment> payments =
+        paymentRepository.findByServiceOrderIdOrderByCreatedAtDesc(serviceOrderId);
+    if (payments.isEmpty()) {
+      throw new BusinessException(
+          ErrorCode.PAYMENT_NOT_FOUND,
+          "Không tìm thấy thông tin thanh toán trực tuyến cho đơn #" + serviceOrderId);
+    }
+    if (currentAccount.role() != UserAccountRole.ADMIN
+        && payments.stream()
+            .anyMatch(p -> !currentAccount.id().equals(p.getCounterpartyAccountId()))) {
+      throw new BusinessException(
+          ErrorCode.PAYMENT_ACCESS_DENIED,
+          "Bạn không có quyền tạo link thanh toán cho đơn hàng này.");
+    }
+
+    List<Payment> inbound =
+        payments.stream().filter(p -> p.getDirection() == PaymentDirection.IN).toList();
+    if (inbound.isEmpty()) {
+      throw new BusinessException(
+          ErrorCode.PAYMENT_INVALID_STATE, "Đơn hàng không có giao dịch thu trực tuyến hợp lệ.");
+    }
+
+    Payment latestInbound = inbound.get(0);
+    if (latestInbound.getStatus() == PaymentStatus.SUCCEEDED) {
+      throw new BusinessException(
+          ErrorCode.PAYMENT_INVALID_STATE, "Đơn hàng đã được thanh toán thành công.");
+    }
+    if (inbound.stream().allMatch(p -> p.getStatus() == PaymentStatus.CANCELLED)) {
+      throw new BusinessException(
+          ErrorCode.PAYMENT_INVALID_STATE,
+          "Đơn hàng đã bị huỷ, không thể tạo lại link thanh toán.");
+    }
+
+    Instant now = clock.instant();
+    for (Payment p : inbound) {
+      if (p.getStatus() == PaymentStatus.PENDING
+          && p.getPaymentUrlExpiresAt() != null
+          && !p.getPaymentUrlExpiresAt().isAfter(now)) {
+        p.setStatus(PaymentStatus.EXPIRED);
+        p.setFailureReason("Link thanh toán đã hết hạn hiệu lực.");
+        paymentRepository.save(p);
+      }
+    }
+
+    String safeIp = clientIp == null || clientIp.isBlank() ? "127.0.0.1" : clientIp;
+    if (latestInbound.getPurpose() == PaymentPurpose.ORDER_TOP_UP) {
+      return createOrderTopUp(
+          serviceOrderId,
+          latestInbound.getCounterpartyAccountId(),
+          latestInbound.getAmountVnd(),
+          safeIp);
+    }
+    return createOrderPayment(
+        serviceOrderId,
+        latestInbound.getCounterpartyAccountId(),
+        latestInbound.getAmountVnd(),
+        safeIp);
+  }
+
   private PaymentLink createOrderInPayment(
       PaymentPurpose purpose,
       Long serviceOrderId,
@@ -205,14 +331,16 @@ public class PaymentServiceImpl implements PaymentService {
   @Transactional
   public VnPayIpnResponse processVnPayIpn(Map<String, String> params) {
     String txnRef = params.get("vnp_TxnRef");
-    String amountStr = params.get("vnp_Amount");
+    final String amountStr = params.get("vnp_Amount");
     String vnpResponseCode = params.get("vnp_ResponseCode");
+    String vnpTransactionStatus = params.get("vnp_TransactionStatus");
     String vnpTransactionNo = params.get("vnp_TransactionNo");
-    String vnpBankCode = params.get("vnp_BankCode");
+    final String vnpBankCode = params.get("vnp_BankCode");
 
     // 1. Ghi nhận raw payload sự kiện callback (append-only)
     PaymentGatewayEvent event = new PaymentGatewayEvent();
-    event.setProvider(paymentGatewayClient.provider());
+    String provider = paymentGatewayClient.provider();
+    event.setProvider(provider != null ? provider : "VNPAY");
     event.setEventType(PaymentGatewayEventType.IPN);
     event.setTransactionCode(txnRef != null ? txnRef : "UNKNOWN");
     event.setGatewayTransactionNo(vnpTransactionNo);
@@ -220,7 +348,8 @@ public class PaymentServiceImpl implements PaymentService {
     if (amountStr != null) {
       try {
         event.setAmountVnd(Long.parseLong(amountStr) / 100);
-      } catch (NumberFormatException ignored) {
+      } catch (NumberFormatException ex) {
+        event.setAmountVnd(null);
       }
     }
     boolean isSignatureValid = paymentGatewayClient.verifySignature(params);
@@ -230,7 +359,7 @@ public class PaymentServiceImpl implements PaymentService {
 
     // 2. Kiểm tra tính hợp lệ của chữ ký HMAC
     if (!isSignatureValid) {
-      paymentGatewayEventRepository.save(event);
+      saveGatewayEventIfAbsent(event);
       log.warn("[VNPay IPN] Chữ ký không hợp lệ cho giao dịch: {}", txnRef);
       return VnPayIpnResponse.invalidSignature();
     }
@@ -238,7 +367,7 @@ public class PaymentServiceImpl implements PaymentService {
     // 3. Tra cứu giao dịch trong DB kèm khoá bi quan để tránh race condition khi IPN gọi đồng thời
     Optional<Payment> optPayment = paymentRepository.findByTransactionCodeForUpdate(txnRef);
     if (optPayment.isEmpty()) {
-      paymentGatewayEventRepository.save(event);
+      saveGatewayEventIfAbsent(event);
       log.warn("[VNPay IPN] Không tìm thấy mã giao dịch: {}", txnRef);
       return VnPayIpnResponse.orderNotFound();
     }
@@ -248,7 +377,7 @@ public class PaymentServiceImpl implements PaymentService {
 
     // 4. Chỉ xử lý giao dịch đang PENDING; mọi trạng thái khác trả idempotent để tránh ghi đè
     if (payment.getStatus() != PaymentStatus.PENDING) {
-      paymentGatewayEventRepository.save(event);
+      saveGatewayEventIfAbsent(event);
       log.info(
           "[VNPay IPN] Giao dịch không ở trạng thái PENDING (hiện tại: {}): txnRef={}",
           payment.getStatus(),
@@ -262,7 +391,7 @@ public class PaymentServiceImpl implements PaymentService {
     try {
       receivedAmountX100 = Long.parseLong(amountStr != null ? amountStr : "0");
     } catch (NumberFormatException e) {
-      paymentGatewayEventRepository.save(event);
+      saveGatewayEventIfAbsent(event);
       return VnPayIpnResponse.invalidAmount();
     }
 
@@ -277,7 +406,7 @@ public class PaymentServiceImpl implements PaymentService {
       payment.setGatewayResponseCode(vnpResponseCode);
       payment.setGatewayTransactionNo(vnpTransactionNo);
       Payment updated = paymentRepository.save(payment);
-      paymentGatewayEventRepository.save(event);
+      saveGatewayEventIfAbsent(event);
       auditLogService.recordSuccess(
           new AuditEntry(
               AuditAction.PAYMENT_FAILED,
@@ -298,15 +427,18 @@ public class PaymentServiceImpl implements PaymentService {
       return VnPayIpnResponse.invalidAmount();
     }
 
-    // 6. Cập nhật trạng thái thanh toán
-    if ("00".equals(vnpResponseCode)) {
+    // 6. Cập nhật trạng thái thanh toán (SPEC-02 P-02: ResponseCode = 00 & TransactionStatus = 00)
+    boolean gatewaySuccess =
+        "00".equals(vnpResponseCode)
+            && (vnpTransactionStatus == null || "00".equals(vnpTransactionStatus));
+    if (gatewaySuccess) {
       payment.setStatus(PaymentStatus.SUCCEEDED);
       payment.setSucceededAt(clock.instant());
       payment.setGatewayTransactionNo(vnpTransactionNo);
       payment.setGatewayResponseCode(vnpResponseCode);
       payment.setGatewayBankCode(vnpBankCode);
       Payment updated = paymentRepository.save(payment);
-      paymentGatewayEventRepository.save(event);
+      saveGatewayEventIfAbsent(event);
 
       auditLogService.recordSuccess(
           new AuditEntry(
@@ -338,26 +470,28 @@ public class PaymentServiceImpl implements PaymentService {
           txnRef,
           updated.getAmountVnd());
     } else {
+      String failCode =
+          "00".equals(vnpResponseCode) ? "status=" + vnpTransactionStatus : vnpResponseCode;
       payment.setStatus(PaymentStatus.FAILED);
-      payment.setFailureReason("VNPay báo mã lỗi: " + vnpResponseCode);
+      payment.setFailureReason("VNPay báo mã lỗi: " + failCode);
       payment.setGatewayResponseCode(vnpResponseCode);
       payment.setGatewayTransactionNo(vnpTransactionNo);
       Payment updated = paymentRepository.save(payment);
-      paymentGatewayEventRepository.save(event);
+      saveGatewayEventIfAbsent(event);
 
       auditLogService.recordSuccess(
           new AuditEntry(
               AuditAction.PAYMENT_FAILED,
               AuditTargetType.PAYMENT,
               updated.getId(),
-              "Thanh toán thất bại, mã lỗi cổng: " + vnpResponseCode,
+              "Thanh toán thất bại, mã lỗi cổng: " + failCode,
               null,
               null));
 
       log.warn(
           "[VNPay IPN] Thanh toán thất bại từ cổng: txnRef={}, responseCode={}",
           txnRef,
-          vnpResponseCode);
+          failCode);
     }
 
     return VnPayIpnResponse.success();
@@ -368,31 +502,41 @@ public class PaymentServiceImpl implements PaymentService {
   public PaymentReturnResponse processVnPayReturn(Map<String, String> params) {
     String txnRef = params.get("vnp_TxnRef");
     String vnpResponseCode = params.get("vnp_ResponseCode");
+    String vnpTransactionStatus = params.get("vnp_TransactionStatus");
     String amountStr = params.get("vnp_Amount");
 
     boolean signatureValid = paymentGatewayClient.verifySignature(params);
-    boolean success = signatureValid && "00".equals(vnpResponseCode);
+    final boolean success =
+        signatureValid
+            && "00".equals(vnpResponseCode)
+            && (vnpTransactionStatus == null || "00".equals(vnpTransactionStatus));
 
     Long amountVnd = null;
     if (amountStr != null) {
       try {
         amountVnd = Long.parseLong(amountStr) / 100;
-      } catch (NumberFormatException ignored) {
+      } catch (NumberFormatException ex) {
+        amountVnd = null;
       }
     }
 
     Long serviceOrderId = null;
+    Long consignmentSaleId = null;
+    PaymentStatus paymentStatus = null;
     if (txnRef != null) {
       Optional<Payment> optPayment = paymentRepository.findByTransactionCode(txnRef);
       if (optPayment.isPresent()) {
-        serviceOrderId = optPayment.get().getServiceOrderId();
+        Payment found = optPayment.get();
+        serviceOrderId = found.getServiceOrderId();
+        consignmentSaleId = found.getConsignmentSaleId();
+        paymentStatus = found.getStatus();
       }
     }
 
     String message;
     if (!signatureValid) {
       message = "Chữ ký bảo mật không hợp lệ";
-    } else if ("00".equals(vnpResponseCode)) {
+    } else if (success) {
       message = "Thanh toán thành công";
     } else {
       message = "Giao dịch không thành công hoặc đã bị hủy (mã " + vnpResponseCode + ")";
@@ -405,6 +549,8 @@ public class PaymentServiceImpl implements PaymentService {
         .message(message)
         .amountVnd(amountVnd)
         .serviceOrderId(serviceOrderId)
+        .consignmentSaleId(consignmentSaleId)
+        .paymentStatus(paymentStatus)
         .build();
   }
 
@@ -425,7 +571,7 @@ public class PaymentServiceImpl implements PaymentService {
                         ErrorCode.PAYMENT_NOT_FOUND, "Không tìm thấy giao dịch với ID: " + id));
 
     checkPaymentAccess(payment, currentAccount);
-    return paymentMapper.toResponse(payment);
+    return paymentMapper.toResponse(payment, buildActivePendingUrl(payment, "127.0.0.1"));
   }
 
   @Override
@@ -447,7 +593,7 @@ public class PaymentServiceImpl implements PaymentService {
                         "Không tìm thấy giao dịch với mã: " + transactionCode));
 
     checkPaymentAccess(payment, currentAccount);
-    return paymentMapper.toResponse(payment);
+    return paymentMapper.toResponse(payment, buildActivePendingUrl(payment, "127.0.0.1"));
   }
 
   @Override
@@ -471,7 +617,9 @@ public class PaymentServiceImpl implements PaymentService {
           ErrorCode.PAYMENT_ACCESS_DENIED,
           "Bạn không có quyền xem thông tin thanh toán của đơn hàng này.");
     }
-    return payments.stream().map(paymentMapper::toResponse).toList();
+    return payments.stream()
+        .map(p -> paymentMapper.toResponse(p, buildActivePendingUrl(p, "127.0.0.1")))
+        .toList();
   }
 
   @Override
@@ -594,6 +742,43 @@ public class PaymentServiceImpl implements PaymentService {
         saved.getTransactionCode(),
         saved.getStatus(),
         saved.getAmountVnd());
+  }
+
+  private void saveGatewayEventIfAbsent(PaymentGatewayEvent event) {
+    boolean exists =
+        paymentGatewayEventRepository.existsDuplicateEvent(
+            event.getProvider(),
+            event.getEventType(),
+            event.getTransactionCode(),
+            event.getGatewayTransactionNo(),
+            event.getResponseCode());
+    if (!exists) {
+      paymentGatewayEventRepository.save(event);
+    }
+  }
+
+  private String buildActivePendingUrl(Payment payment, String clientIp) {
+    if (payment == null
+        || payment.getMethod() != PaymentMethod.VNPAY
+        || payment.getDirection() != PaymentDirection.IN
+        || payment.getStatus() != PaymentStatus.PENDING
+        || payment.getPaymentUrlExpiresAt() == null
+        || !payment.getPaymentUrlExpiresAt().isAfter(clock.instant())
+        || !paymentGatewayClient.isConfigured()) {
+      return null;
+    }
+    String safeIp = clientIp == null || clientIp.isBlank() ? "127.0.0.1" : clientIp;
+    String orderInfo =
+        payment.getServiceOrderId() != null
+            ? "Thanh toan don hang FilmLink #" + payment.getServiceOrderId()
+            : "Thanh toan mua thiet bi ky gui FilmLink #" + payment.getConsignmentSaleId();
+    return paymentGatewayClient.buildPaymentUrl(
+        payment.getTransactionCode(),
+        payment.getAmountVnd(),
+        orderInfo,
+        null,
+        DEFAULT_LOCALE,
+        safeIp);
   }
 
   private void checkPaymentAccess(Payment payment, AuthenticatedAccount currentAccount) {
